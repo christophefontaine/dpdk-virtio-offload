@@ -31,6 +31,7 @@
 #define VIRTIO_NET_F_MQ		22	/* Device supports Receive Flow Steering */
 #define VIRTIO_NET_F_CTRL_MAC_ADDR 23	/* Set MAC address */
 #define VIRTIO_NET_F_RSS	60	/* RSS supported */
+#define VIRTIO_NET_F_FLOW_OFFLOAD 61	/* Host supports flow offload */
 
 /*
  * Do we get callbacks when the ring is completely used,

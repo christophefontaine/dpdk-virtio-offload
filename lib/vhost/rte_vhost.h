@@ -289,6 +289,13 @@ struct rte_vhost_device_ops {
 	 */
 	void (*guest_notified)(int vid);
 
+	/**
+	 * Flow handling callbacks
+	 */
+	int (*flow_create)(int vid, uint8_t *flow_spec, size_t len);
+	int (*flow_destroy)(int vid, uint64_t flow_id);
+	int (*flow_query)(int vid, uint64_t flow_id, uint64_t *pkt, uint64_t *bytes);
+
 	void *reserved[1]; /**< Reserved for future extension */
 };
 

@@ -683,6 +683,7 @@ virtio_user_pmd_probe(struct rte_vdev_device *vdev)
 			hw->use_vec_rx = 1;
 		}
 	}
+	LIST_INIT(&hw->flows);
 
 	rte_eth_dev_probing_finish(eth_dev);
 	ret = 0;

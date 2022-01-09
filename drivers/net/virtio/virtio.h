@@ -229,6 +229,7 @@ struct virtio_hw {
 	uint64_t req_guest_features;
 	struct virtnet_ctl *cvq;
 	bool use_va;
+	LIST_HEAD(virtio_flows, rte_flow) flows;        /* rte_flow rules */
 };
 
 struct virtio_ops {

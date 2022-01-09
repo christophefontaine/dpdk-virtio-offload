@@ -17,6 +17,7 @@
 
 #include "vhost.h"
 #include "virtio_user_dev.h"
+#include "virtio_flow.h"
 
 struct vhost_user_data {
 	int vhostfd;
@@ -35,6 +36,10 @@ struct vhost_user_data {
 
 #ifndef VHOST_USER_PROTOCOL_F_REPLY_ACK
 #define VHOST_USER_PROTOCOL_F_REPLY_ACK 3
+
+#endif
+#ifndef VHOST_USER_NEED_REPLY
+#define VHOST_USER_NEED_REPLY            (0x1 << 3)
 #endif
 
 #ifndef VHOST_USER_PROTOCOL_F_STATUS
@@ -99,6 +104,8 @@ struct vhost_user_msg {
 		struct vhost_vring_state state;
 		struct vhost_vring_addr addr;
 		struct vhost_memory memory;
+		struct VirtioFlowSpec flow_spec;
+		struct VirtioFlowStats flow_stats;
 	} payload;
 } __rte_packed;
 
@@ -991,6 +998,64 @@ vhost_user_get_intr_fd(struct virtio_user_dev *dev)
 	return data->vhostfd;
 }
 
+static int
+vhost_user_flow_create(struct virtio_user_dev *dev,
+		 VirtioFlowSpec *flow_spec, size_t len)
+{
+	struct vhost_user_data *vudata = dev->backend_data;
+	struct vhost_user_msg msg = {
+		.request = VHOST_USER_FLOW_CREATE,
+		.flags = VHOST_USER_VERSION,
+		.size = len,
+	};
+	memcpy(&msg.payload.flow_spec, flow_spec, len);
+	return vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
+}
+
+static int
+vhost_user_flow_destroy(struct virtio_user_dev *dev, uint64_t flow_id)
+{
+	struct vhost_user_data *vudata = dev->backend_data;
+	struct vhost_user_msg msg = {
+		.request = VHOST_USER_FLOW_DESTROY,
+		.flags = VHOST_USER_VERSION,
+		.size = sizeof(msg.payload.u64),
+	};
+	msg.payload.u64 = flow_id;
+	return vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
+}
+
+static int
+vhost_user_flow_query(struct virtio_user_dev *dev,
+		uint64_t flow_id,  uint64_t *packets, uint64_t *bytes)
+{
+	struct vhost_user_data *vudata = dev->backend_data;
+	struct vhost_user_msg msg = {
+		.request = VHOST_USER_FLOW_QUERY,
+		.flags = VHOST_USER_VERSION | VHOST_USER_NEED_REPLY,
+		.size = sizeof(VirtioFlowStats), // maybe use rte_flow_count instead ?
+	};
+	msg.payload.flow_stats.flow_id = flow_id;
+	msg.payload.flow_stats.packets = 0;
+	msg.payload.flow_stats.bytes = 0;
+	int ret = vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
+	if (ret < 0) {
+		PMD_DRV_LOG(ERR, "Failed to send request");
+		goto err;
+	}
+	ret = vhost_user_read(vudata->vhostfd, &msg);
+	if (ret < 0) {
+		PMD_DRV_LOG(ERR, "Failed to read reply");
+		goto err;
+	}
+
+	*packets = msg.payload.flow_stats.packets;
+	*bytes = msg.payload.flow_stats.bytes;
+err:
+	PMD_DRV_LOG(ERR, "Failed to query flow stats");
+	return ret;
+}
+
 struct virtio_user_backend_ops virtio_ops_user = {
 	.setup = vhost_user_setup,
 	.destroy = vhost_user_destroy,
@@ -1012,4 +1077,7 @@ struct virtio_user_backend_ops virtio_ops_user = {
 	.server_disconnect = vhost_user_server_disconnect,
 	.server_reconnect = vhost_user_server_reconnect,
 	.get_intr_fd = vhost_user_get_intr_fd,
+	.flow_create = vhost_user_flow_create,
+	.flow_destroy = vhost_user_flow_destroy,
+	.flow_query = vhost_user_flow_query,
 };

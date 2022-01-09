@@ -14,6 +14,7 @@ sources = files(
         'config.c',
         'csumonly.c',
         'flowgen.c',
+	'flowfwd.c',
         'icmpecho.c',
         'ieee1588fwd.c',
         'iofwd.c',

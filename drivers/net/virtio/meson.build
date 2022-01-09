@@ -10,6 +10,7 @@ endif
 sources += files(
         'virtio.c',
         'virtio_ethdev.c',
+        'virtio_flow.c',
         'virtio_pci_ethdev.c',
         'virtio_pci.c',
         'virtio_rxtx.c',

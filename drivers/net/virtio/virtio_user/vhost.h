@@ -89,6 +89,10 @@ struct virtio_user_backend_ops {
 	int (*server_disconnect)(struct virtio_user_dev *dev);
 	int (*server_reconnect)(struct virtio_user_dev *dev);
 	int (*get_intr_fd)(struct virtio_user_dev *dev);
+
+	int (*flow_create)(struct virtio_user_dev *dev, uint8_t *flow_spec, size_t len);
+	int (*flow_destroy)(struct virtio_user_dev *dev, uint64_t flow_id);
+	int (*flow_query)(struct virtio_user_dev *dev, uint64_t flow_id, uint64_t *packets, uint64_t *bytes);
 };
 
 extern struct virtio_user_backend_ops virtio_ops_user;

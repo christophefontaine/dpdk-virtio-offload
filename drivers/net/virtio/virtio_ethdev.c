@@ -55,6 +55,8 @@ static int virtio_dev_rss_hash_update(struct rte_eth_dev *dev,
 		struct rte_eth_rss_conf *rss_conf);
 static int virtio_dev_rss_hash_conf_get(struct rte_eth_dev *dev,
 		struct rte_eth_rss_conf *rss_conf);
+static int virtio_dev_flow_ops_get(struct rte_eth_dev *dev,
+		const struct rte_flow_ops **ops);
 static int virtio_dev_rss_reta_update(struct rte_eth_dev *dev,
 			 struct rte_eth_rss_reta_entry64 *reta_conf,
 			 uint16_t reta_size);
@@ -1045,6 +1047,7 @@ static const struct eth_dev_ops virtio_eth_dev_ops = {
 	.tx_queue_setup          = virtio_dev_tx_queue_setup,
 	.rss_hash_update         = virtio_dev_rss_hash_update,
 	.rss_hash_conf_get       = virtio_dev_rss_hash_conf_get,
+	.flow_ops_get            = virtio_dev_flow_ops_get,
 	.reta_update             = virtio_dev_rss_reta_update,
 	.reta_query              = virtio_dev_rss_reta_query,
 	/* collect stats per queue */
@@ -2050,6 +2053,18 @@ virtio_dev_rss_hash_conf_get(struct rte_eth_dev *dev,
 	rss_conf->rss_hf = virtio_to_ethdev_rss_offloads(hw->rss_hash_types);
 
 	return 0;
+}
+static int
+virtio_dev_flow_ops_get(struct rte_eth_dev *dev,
+                        const struct rte_flow_ops **ops)
+{
+	struct virtio_hw *hw = dev->data->dev_private;
+
+	if (!virtio_with_feature(hw, VIRTIO_NET_F_FLOW_OFFLOAD))
+		return -ENOTSUP;
+
+        *ops = &virtio_flow_ops;
+        return 0;
 }
 
 static int virtio_dev_rss_reta_update(struct rte_eth_dev *dev,

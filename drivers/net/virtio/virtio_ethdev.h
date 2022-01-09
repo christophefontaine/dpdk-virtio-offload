@@ -27,7 +27,7 @@
 	 1u << VIRTIO_NET_F_CTRL_RX	  |	\
 	 1u << VIRTIO_NET_F_CTRL_VLAN	  |	\
 	 1u << VIRTIO_NET_F_MRG_RXBUF	  |	\
-	 1u << VIRTIO_NET_F_MTU	| \
+	 1u << VIRTIO_NET_F_MTU		  |	\
 	 1ULL << VIRTIO_NET_F_GUEST_ANNOUNCE |	\
 	 1u << VIRTIO_RING_F_INDIRECT_DESC |    \
 	 1ULL << VIRTIO_F_VERSION_1       |	\
@@ -51,6 +51,7 @@
 	 1ULL << VIRTIO_NET_F_FLOW_OFFLOAD)
 
 extern const struct eth_dev_ops virtio_user_secondary_eth_dev_ops;
+extern const struct rte_flow_ops virtio_flow_ops;
 
 /*
  * CQ function prototype

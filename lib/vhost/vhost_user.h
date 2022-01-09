@@ -128,6 +128,19 @@ typedef struct VhostUserInflight {
 	uint16_t queue_size;
 } VhostUserInflight;
 
+typedef struct VhostUserFlowSpec {
+	uint64_t flow_id;
+	uint16_t pattern_size; /* offset to actions */
+	uint16_t action_size;
+	uint8_t flow_spec[];
+} VhostUserFlowSpec, VirtioFlowSpec;
+
+typedef struct VhostUserFlowStats {
+	uint64_t flow_id;
+	uint64_t packets;
+	uint64_t bytes;
+} VhostUserFlowStats, VirtioFlowStats;
+
 typedef struct VhostUserMsg {
 	union {
 		uint32_t master; /* a VhostUserRequest value */
@@ -151,6 +164,8 @@ typedef struct VhostUserMsg {
 		VhostUserCryptoSessionParam crypto_session;
 		VhostUserVringArea area;
 		VhostUserInflight inflight;
+		VhostUserFlowSpec flow_spec;
+		VhostUserFlowStats flow_stats;
 	} payload;
 	int fds[VHOST_MEMORY_MAX_NREGIONS];
 	int fd_num;

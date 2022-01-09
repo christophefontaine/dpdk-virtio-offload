@@ -43,6 +43,8 @@
 #endif
 
 #include <rte_common.h>
+#include <rte_ethdev.h>
+#include "lib/ethdev/ethdev_driver.h"
 #include <rte_malloc.h>
 #include <rte_log.h>
 #include <rte_vfio.h>
@@ -91,6 +93,9 @@ static const char *vhost_message_str[VHOST_USER_MAX] = {
 	[VHOST_USER_SET_INFLIGHT_FD] = "VHOST_USER_SET_INFLIGHT_FD",
 	[VHOST_USER_SET_STATUS] = "VHOST_USER_SET_STATUS",
 	[VHOST_USER_GET_STATUS] = "VHOST_USER_GET_STATUS",
+	[VHOST_USER_FLOW_CREATE] = "VHOST_USER_FLOW_CREATE",
+	[VHOST_USER_FLOW_DESTROY] = "VHOST_USER_FLOW_DESTROY",
+	[VHOST_USER_FLOW_QUERY] = "VHOST_USER_FLOW_QUERY",
 };
 
 static int send_vhost_reply(int sockfd, struct vhu_msg_context *msg);
@@ -2756,6 +2761,58 @@ vhost_user_set_status(struct virtio_net **pdev,
 	return RTE_VHOST_MSG_RESULT_OK;
 }
 
+static int
+vhost_user_flow_create(struct virtio_net **pdev, struct VhostUserMsg *msg,
+			int main_fd __rte_unused)
+{
+	if (validate_msg_fds(msg, 0) != 0)
+		return RTE_VHOST_MSG_RESULT_ERR;
+	struct virtio_net *dev = *pdev;
+	if (dev->notify_ops->flow_create) {
+		dev->notify_ops->flow_create(dev->vid,
+				(uint8_t *)(VirtioFlowSpec*)&(msg->payload.u64), msg->size);
+		return RTE_VHOST_MSG_RESULT_OK;
+	} else {
+		return RTE_VHOST_MSG_RESULT_NOT_HANDLED;
+	}
+}
+
+static int
+vhost_user_flow_destroy(struct virtio_net **pdev, struct VhostUserMsg *msg,
+			int main_fd __rte_unused)
+{
+	if (validate_msg_fds(msg, 0) != 0)
+		return RTE_VHOST_MSG_RESULT_ERR;
+	struct virtio_net *dev = *pdev;
+
+	if (dev->notify_ops->flow_destroy) {
+		dev->notify_ops->flow_destroy(dev->vid, msg->payload.u64);
+		return RTE_VHOST_MSG_RESULT_OK;
+	} else {
+		return RTE_VHOST_MSG_RESULT_NOT_HANDLED;
+	}
+}
+
+static int
+vhost_user_flow_query(struct virtio_net **pdev, struct VhostUserMsg *msg,
+			int main_fd __rte_unused)
+{
+	if (validate_msg_fds(msg, 0) != 0)
+		return RTE_VHOST_MSG_RESULT_ERR;
+	struct virtio_net *dev = *pdev;
+	if (dev->notify_ops->flow_query) {
+		VirtioFlowStats *stats = (VirtioFlowStats *)&msg->payload.u64;
+		dev->notify_ops->flow_query(dev->vid,
+				stats->flow_id,
+				&stats->packets,
+				&stats->bytes);
+
+		return RTE_VHOST_MSG_RESULT_REPLY;
+	} else {
+		return RTE_VHOST_MSG_RESULT_NOT_HANDLED;
+	}
+}
+
 typedef int (*vhost_message_handler_t)(struct virtio_net **pdev,
 					struct vhu_msg_context *ctx,
 					int main_fd);
@@ -2791,6 +2848,10 @@ static vhost_message_handler_t vhost_message_handlers[VHOST_USER_MAX] = {
 	[VHOST_USER_SET_INFLIGHT_FD] = vhost_user_set_inflight_fd,
 	[VHOST_USER_SET_STATUS] = vhost_user_set_status,
 	[VHOST_USER_GET_STATUS] = vhost_user_get_status,
+
+	[VHOST_USER_FLOW_CREATE] = vhost_user_flow_create,
+	[VHOST_USER_FLOW_DESTROY] = vhost_user_flow_destroy,
+	[VHOST_USER_FLOW_QUERY] = vhost_user_flow_query,
 };
 
 /* return bytes# of read on success or negative val on failure. */

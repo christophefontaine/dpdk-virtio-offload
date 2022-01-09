@@ -557,7 +557,8 @@ destroy:
 	 1ULL << VIRTIO_NET_F_GUEST_TSO6	|	\
 	 1ULL << VIRTIO_F_IN_ORDER		|	\
 	 1ULL << VIRTIO_F_VERSION_1		|	\
-	 1ULL << VIRTIO_F_RING_PACKED)
+	 1ULL << VIRTIO_F_RING_PACKED		|	\
+	 1ULL << VIRTIO_NET_F_FLOW_OFFLOAD)
 
 int
 virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,

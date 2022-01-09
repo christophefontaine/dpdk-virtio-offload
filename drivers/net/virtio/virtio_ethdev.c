@@ -2561,6 +2561,7 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 
 	PMD_INIT_LOG(DEBUG, "configure");
 	req_features = VIRTIO_PMD_DEFAULT_GUEST_FEATURES;
+	req_features |= (1ULL << VIRTIO_NET_F_FLOW_OFFLOAD );
 
 	if (rxmode->mq_mode != RTE_ETH_MQ_RX_NONE && rxmode->mq_mode != RTE_ETH_MQ_RX_RSS) {
 		PMD_DRV_LOG(ERR,
@@ -2634,6 +2635,12 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 		 !virtio_with_feature(hw, VIRTIO_NET_F_GUEST_TSO6))) {
 		PMD_DRV_LOG(ERR,
 			"Large Receive Offload not available on this host");
+		return -ENOTSUP;
+	}
+
+	if (!virtio_with_feature(hw, VIRTIO_NET_F_FLOW_OFFLOAD)) {
+		PMD_DRV_LOG(ERR,
+			"Flow offload not available on this host");
 		return -ENOTSUP;
 	}
 

@@ -323,6 +323,13 @@ struct vring_packed_desc_event {
 #define VIRTIO_F_IN_ORDER      35
 #endif
 
+/*
+ * POC to support Flow offload from an app to a vswitch
+ */
+#ifndef VIRTIO_NET_F_FLOW_OFFLOAD
+#define VIRTIO_NET_F_FLOW_OFFLOAD 61
+#endif
+
 /* Features supported by this builtin vhost-user net driver. */
 #define VIRTIO_NET_SUPPORTED_FEATURES ((1ULL << VIRTIO_NET_F_MRG_RXBUF) | \
 				(1ULL << VIRTIO_F_ANY_LAYOUT) | \
@@ -349,7 +356,8 @@ struct vring_packed_desc_event {
 				(1ULL << VIRTIO_NET_F_MTU)  | \
 				(1ULL << VIRTIO_F_IN_ORDER) | \
 				(1ULL << VIRTIO_F_IOMMU_PLATFORM) | \
-				(1ULL << VIRTIO_F_RING_PACKED))
+				(1ULL << VIRTIO_F_RING_PACKED) | \
+				(1ULL << VIRTIO_NET_F_FLOW_OFFLOAD))
 
 
 struct guest_page {

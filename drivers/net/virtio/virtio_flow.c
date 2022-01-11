@@ -11,6 +11,11 @@
 #include <unistd.h>
 #include <stdarg.h>
 
+/* used to serialize rte_flow to a netlink msg */
+#include <linux/netlink.h>
+#include <linux/pkt_cls.h>
+#include <libmnl/libmnl.h>
+
 #include <rte_ethdev.h>
 #include <rte_log.h>
 #include <rte_malloc.h>
@@ -19,27 +24,433 @@
 
 #include "virtio.h"
 #include "virtio_logs.h"
-#include "virtio_flow.h"
 #include "virtio_user/virtio_user_dev.h"
 #include "virtio_user/vhost.h"
 
+#define NLMSG_BUF 1024
+struct nlmsg {
+	struct nlmsghdr nh;
+	char buf[NLMSG_BUF];
+};
 
 struct rte_flow {
 	LIST_ENTRY(rte_flow) next; /* Pointer to the next rte_flow structure */
-	struct VirtioFlowSpec rule;
+	struct rte_flow_conv_rule rule;
+	struct nlmsg nl_rule;
 };
 
+
 #define virtio_user_get_dev(hwp) container_of(hwp, struct virtio_user_dev, hw)
+struct virtio_flow_items {
+	const void *mask;
+	const unsigned int mask_sz;
+	const void *default_mask;
+	int (*serialize)(const struct rte_flow_item *item, struct nlmsghdr *hdr);
+	const enum rte_flow_item_type *const items;
+};
+
+struct virtio_flow_actions {
+	const void *mask;
+	const unsigned int mask_sz;
+	const void *default_mask;
+	int (*serialize)(const struct rte_flow_action *item, struct nlmsghdr *hdr);
+};
+
+static int virtio_flow_create_eth(const struct rte_flow_item *item, struct nlmsghdr *msg);
+static int virtio_flow_create_vlan(const struct rte_flow_item *item, struct nlmsghdr *msg);
+static int virtio_flow_create_ipv4(const struct rte_flow_item *item, struct nlmsghdr *msg);
+static int virtio_flow_create_ipv6(const struct rte_flow_item *item, struct nlmsghdr *msg);
+static int virtio_flow_create_udp(const struct rte_flow_item *item, struct nlmsghdr *msg);
+static int virtio_flow_create_tcp(const struct rte_flow_item *item, struct nlmsghdr *msg);
+static int virtio_flow_create_sctp(const struct rte_flow_item *item, struct nlmsghdr *msg);
 
 
-static
-struct rte_flow *virtio_flow_create(struct rte_eth_dev *dev,
-				   const struct rte_flow_attr *attr,
-				   const struct rte_flow_item pattern[],
-				   const struct rte_flow_action actions[],
-				   struct rte_flow_error *error)
+
+/* Static initializer for items. */
+#define ITEMS(...) \
+	(const enum rte_flow_item_type []){ \
+		__VA_ARGS__, RTE_FLOW_ITEM_TYPE_END, \
+	}
+
+static const struct virtio_flow_items virtio_flow_items[] = {
+	[RTE_FLOW_ITEM_TYPE_END] = {
+		.items = ITEMS(RTE_FLOW_ITEM_TYPE_ETH),
+	},
+	[RTE_FLOW_ITEM_TYPE_ETH] = {
+		.items = ITEMS(
+			RTE_FLOW_ITEM_TYPE_VLAN,
+			RTE_FLOW_ITEM_TYPE_IPV4,
+			RTE_FLOW_ITEM_TYPE_IPV6),
+		.mask = &(const struct rte_flow_item_eth){
+			.dst.addr_bytes = "\xff\xff\xff\xff\xff\xff",
+			.src.addr_bytes = "\xff\xff\xff\xff\xff\xff",
+			.type = -1,
+		},
+		.mask_sz = sizeof(struct rte_flow_item_eth),
+		.default_mask = &rte_flow_item_eth_mask,
+		.serialize = virtio_flow_create_eth,
+	},
+	[RTE_FLOW_ITEM_TYPE_VLAN] = {
+		.items = ITEMS(RTE_FLOW_ITEM_TYPE_IPV4,
+			       RTE_FLOW_ITEM_TYPE_IPV6),
+		.mask = &(const struct rte_flow_item_vlan){
+			/* DEI matching is not supported */
+#if RTE_BYTE_ORDER == RTE_LITTLE_ENDIAN
+			.tci = 0xffef,
+#else
+			.tci = 0xefff,
+#endif
+			.inner_type = -1,
+		},
+		.mask_sz = sizeof(struct rte_flow_item_vlan),
+		.default_mask = &rte_flow_item_vlan_mask,
+		.serialize = virtio_flow_create_vlan,
+	},
+	[RTE_FLOW_ITEM_TYPE_IPV4] = {
+		.items = ITEMS(RTE_FLOW_ITEM_TYPE_UDP,
+			       RTE_FLOW_ITEM_TYPE_TCP),
+		.mask = &(const struct rte_flow_item_ipv4){
+			.hdr = {
+				.src_addr = -1,
+				.dst_addr = -1,
+				.next_proto_id = -1,
+			},
+		},
+		.mask_sz = sizeof(struct rte_flow_item_ipv4),
+		.default_mask = &rte_flow_item_ipv4_mask,
+		.serialize = virtio_flow_create_ipv4,
+	},
+	[RTE_FLOW_ITEM_TYPE_IPV6] = {
+		.items = ITEMS(RTE_FLOW_ITEM_TYPE_UDP,
+			       RTE_FLOW_ITEM_TYPE_TCP),
+		.mask = &(const struct rte_flow_item_ipv6){
+			.hdr = {
+				.src_addr = {
+					"\xff\xff\xff\xff\xff\xff\xff\xff"
+					"\xff\xff\xff\xff\xff\xff\xff\xff",
+				},
+				.dst_addr = {
+					"\xff\xff\xff\xff\xff\xff\xff\xff"
+					"\xff\xff\xff\xff\xff\xff\xff\xff",
+				},
+				.proto = -1,
+			},
+		},
+		.mask_sz = sizeof(struct rte_flow_item_ipv6),
+		.default_mask = &rte_flow_item_ipv6_mask,
+		.serialize = virtio_flow_create_ipv6,
+	},
+	[RTE_FLOW_ITEM_TYPE_UDP] = {
+		.mask = &(const struct rte_flow_item_udp){
+			.hdr = {
+				.src_port = -1,
+				.dst_port = -1,
+			},
+		},
+		.mask_sz = sizeof(struct rte_flow_item_udp),
+		.default_mask = &rte_flow_item_udp_mask,
+		.serialize = virtio_flow_create_udp,
+	},
+	[RTE_FLOW_ITEM_TYPE_TCP] = {
+		.mask = &(const struct rte_flow_item_tcp){
+			.hdr = {
+				.src_port = -1,
+				.dst_port = -1,
+			},
+		},
+		.mask_sz = sizeof(struct rte_flow_item_tcp),
+		.default_mask = &rte_flow_item_tcp_mask,
+		.serialize = virtio_flow_create_tcp,
+	},
+	[RTE_FLOW_ITEM_TYPE_SCTP] = {
+		.mask = &(const struct rte_flow_item_sctp){
+			.hdr = {
+				.src_port = -1,
+				.dst_port = -1,
+			},
+		},
+		.mask_sz = sizeof(struct rte_flow_item_sctp),
+		.default_mask = &rte_flow_item_sctp_mask,
+		.serialize = virtio_flow_create_sctp,
+	},
+
+};
+
+static int
+virtio_flow_create_eth(const struct rte_flow_item *item, struct nlmsghdr *msg)
+{
+	const struct rte_flow_item_eth *spec = item->spec;
+	const struct rte_flow_item_eth *mask = item->mask;
+
+	/* use default mask if none provided */
+	if (!mask)
+		mask = virtio_flow_items[RTE_FLOW_ITEM_TYPE_ETH].default_mask;
+	if (!spec)
+		return 0;
+
+	if (!rte_is_zero_ether_addr(&mask->dst)) {
+		mnl_attr_put(msg, TCA_FLOWER_KEY_ETH_DST,
+			  RTE_ETHER_ADDR_LEN,
+			  &spec->dst.addr_bytes);
+		mnl_attr_put(msg,
+			  TCA_FLOWER_KEY_ETH_DST_MASK, RTE_ETHER_ADDR_LEN,
+			  &mask->dst.addr_bytes);
+	}
+	if (!rte_is_zero_ether_addr(&mask->src)) {
+		mnl_attr_put(msg, TCA_FLOWER_KEY_ETH_SRC,
+			  RTE_ETHER_ADDR_LEN,
+			  &spec->src.addr_bytes);
+		mnl_attr_put(msg,
+			  TCA_FLOWER_KEY_ETH_SRC_MASK, RTE_ETHER_ADDR_LEN,
+			  &mask->src.addr_bytes);
+	}
+	return 0;
+}
+
+static int
+virtio_flow_create_vlan(const struct rte_flow_item *item, struct nlmsghdr *msg)
+{
+	const struct rte_flow_item_vlan *spec = item->spec;
+	if (!spec)
+		return 0;
+	mnl_attr_put_u16(msg, TCA_FLOWER_KEY_VLAN_ID, spec->hdr.vlan_tci);
+	return 0;
+}
+
+static int
+virtio_flow_create_ipv4(const struct rte_flow_item *item, struct nlmsghdr *msg)
+{
+	const struct rte_flow_item_ipv4 *spec = item->spec;
+	const struct rte_flow_item_ipv4 *mask = item->mask;
+
+	if (!mask)
+		mask = virtio_flow_items[RTE_FLOW_ITEM_TYPE_IPV4].default_mask;
+
+	if (!spec)
+		return 0;
+
+	if (mask->hdr.src_addr != 0) {
+		mnl_attr_put_u32(msg, TCA_FLOWER_KEY_IPV4_SRC, spec->hdr.src_addr);
+		mnl_attr_put_u32(msg, TCA_FLOWER_KEY_IPV4_SRC_MASK, mask->hdr.src_addr);
+	}
+	if (mask->hdr.dst_addr != 0) {
+		mnl_attr_put_u32(msg, TCA_FLOWER_KEY_IPV4_DST, spec->hdr.dst_addr);
+		mnl_attr_put_u32(msg, TCA_FLOWER_KEY_IPV4_DST_MASK, mask->hdr.dst_addr);
+	}
+	return 0;
+}
+
+static int
+virtio_flow_create_ipv6(const struct rte_flow_item *item, struct nlmsghdr *msg)
+{
+	mnl_attr_put(msg, TCA_FLOWER_KEY_IPV6_SRC, 16, item->spec);
+	return -ENOTSUP;
+}
+
+static int
+virtio_flow_create_udp(const struct rte_flow_item *item, struct nlmsghdr *msg)
+{
+	const struct rte_flow_item_udp *spec = item->spec;
+	const struct rte_flow_item_udp *mask = item->mask;
+	if (!mask)
+		mask = virtio_flow_items[RTE_FLOW_ITEM_TYPE_UDP].default_mask;
+	if (!spec)
+		return 0;
+
+	if (mask->hdr.src_port != 0) {
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_UDP_SRC, spec->hdr.src_port);
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_UDP_SRC_MASK, mask->hdr.src_port);
+	}
+	if (mask->hdr.dst_port != 0) {
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_UDP_DST, spec->hdr.dst_port);
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_UDP_DST_MASK, mask->hdr.dst_port);
+	}
+	return 0;
+}
+
+static int
+virtio_flow_create_tcp(const struct rte_flow_item *item, struct nlmsghdr *msg)
+{
+	const struct rte_flow_item_tcp *spec = item->spec;
+	const struct rte_flow_item_tcp *mask = item->mask;
+	if (!mask)
+		mask = virtio_flow_items[RTE_FLOW_ITEM_TYPE_TCP].default_mask;
+	if (!spec)
+		return 0;
+
+	if (mask->hdr.src_port != 0) {
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_TCP_SRC, spec->hdr.src_port);
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_TCP_SRC_MASK, mask->hdr.src_port);
+	}
+	if (mask->hdr.dst_port != 0) {
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_TCP_DST, spec->hdr.dst_port);
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_TCP_DST_MASK, mask->hdr.dst_port);
+	}
+	return 0;
+}
+static int
+virtio_flow_create_sctp(const struct rte_flow_item *item, struct nlmsghdr *msg)
+{
+	const struct rte_flow_item_sctp *spec = item->spec;
+	const struct rte_flow_item_sctp *mask = item->mask;
+	if (!mask)
+		mask = virtio_flow_items[RTE_FLOW_ITEM_TYPE_SCTP].default_mask;
+	if (!spec)
+		return 0;
+
+	if (mask->hdr.src_port != 0) {
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_SCTP_SRC, spec->hdr.src_port);
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_SCTP_SRC_MASK, mask->hdr.src_port);
+	}
+	if (mask->hdr.dst_port != 0) {
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_SCTP_DST, spec->hdr.dst_port);
+		mnl_attr_put_u16(msg, TCA_FLOWER_KEY_SCTP_DST_MASK, mask->hdr.dst_port);
+	}
+	return 0;
+}
+
+static int virtio_flow_actions_noop(const struct rte_flow_action *action, struct nlmsghdr *msg);
+static int virtio_flow_actions_drop(const struct rte_flow_action *action, struct nlmsghdr *msg);
+static int virtio_flow_actions_set_port_id(const struct rte_flow_action *action, struct nlmsghdr *msg);
+static int virtio_flow_actions_set_mac_src(const struct rte_flow_action *action, struct nlmsghdr *msg);
+static int virtio_flow_actions_set_mac_dst(const struct rte_flow_action *action, struct nlmsghdr *msg);
+
+static const struct virtio_flow_actions virtio_flow_actions[] = {
+	[RTE_FLOW_ACTION_TYPE_END] = {
+		.serialize = virtio_flow_actions_noop,
+	},
+	[RTE_FLOW_ACTION_TYPE_DROP] = {
+		.serialize = virtio_flow_actions_drop,
+	},
+	[RTE_FLOW_ACTION_TYPE_COUNT] = {
+		.serialize = virtio_flow_actions_noop,
+	},
+	[RTE_FLOW_ACTION_TYPE_PORT_ID] = {
+		.serialize = virtio_flow_actions_set_port_id,
+	},
+	[RTE_FLOW_ACTION_TYPE_SET_MAC_SRC] = {
+		.serialize = virtio_flow_actions_set_mac_src,
+	},
+	[RTE_FLOW_ACTION_TYPE_SET_MAC_DST] = {
+		.serialize = virtio_flow_actions_set_mac_dst,
+	},
+};
+
+static int
+virtio_flow_actions_noop(const struct rte_flow_action *action, struct nlmsghdr *msg)
+{
+	return 0;
+}
+
+static int
+virtio_flow_actions_drop(const struct rte_flow_action *action, struct nlmsghdr *msg)
+{
+	return 0;
+}
+
+
+static int
+virtio_flow_actions_set_port_id(const struct rte_flow_action *action, struct nlmsghdr *msg)
+{
+	return 0;
+}
+
+static int
+virtio_flow_actions_set_mac_src(const struct rte_flow_action *action, struct nlmsghdr *msg)
+{
+	return 0;
+}
+
+static int
+virtio_flow_actions_set_mac_dst(const struct rte_flow_action *action, struct nlmsghdr *msg)
+{
+	return 0;
+}
+
+
+/**
+ * Validate flow rule.
+ *
+ * @see rte_flow_validate()
+ * @see rte_flow_ops
+ */
+static int
+virtio_flow_validate(struct rte_eth_dev *dev,
+			const struct rte_flow_attr *flow_attr __rte_unused,
+			const struct rte_flow_item pattern[] __rte_unused,
+			const struct rte_flow_action actions[] __rte_unused,
+			struct rte_flow_error *error)
+{
+	rte_flow_error_set(error, EINVAL,
+			   RTE_FLOW_ERROR_TYPE_ATTR,
+			   flow_attr, "invalid");
+	return -1;
+}
+
+/*
+ * serialize rte_flow_conv_rule to a linear buffer
+ * based on netlink format
+ * return length of data
+ */
+static int
+serialize_rte_flow(uint16_t pid,
+		  const struct rte_flow_attr *attr __rte_unused,
+		  const struct rte_flow_item items[],
+		  const struct rte_flow_action actions[],
+		  struct rte_flow_error *error,
+		  struct rte_flow *flow)
+{
+	/* Init netlink header
+	 * msg_type and flags are not yet used, but this may be useful
+	 * when we switch to a unique flow_crud API in netops ?
+	 */
+	struct nlmsghdr *n = &flow->nl_rule.nh;
+	n->nlmsg_len = sizeof(struct nlmsghdr);
+	n->nlmsg_type = 0; /* RTM_NEWTFILTER  */
+        n->nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE;
+	
+	struct nl_attr *start_pattern = mnl_attr_nest_start(n, TCA_FLOW_KEYS);
+	for (; items->type != RTE_FLOW_ITEM_TYPE_END; ++items) {
+		if (items->type == RTE_FLOW_ITEM_TYPE_VOID)
+			continue;
+		if (!virtio_flow_items[items->type].serialize) {
+			rte_flow_error_set(
+				error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ITEM,
+				items, "Item not supported");
+			goto fail;
+		}
+		virtio_flow_items[items->type].serialize(items, n);
+	}
+	mnl_attr_nest_end(n, start_pattern);
+
+	struct nl_attr *start_actions = mnl_attr_nest_start(n, TCA_FLOW_ACT);
+	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; ++actions) {
+		if (actions->type == RTE_FLOW_ACTION_TYPE_VOID) {
+			continue;
+		}
+		if (!virtio_flow_actions[actions->type].serialize) {
+			rte_flow_error_set(
+				error, ENOTSUP, RTE_FLOW_ERROR_TYPE_ACTION,
+				actions, "Item not supported");
+			goto fail;
+		}
+		virtio_flow_actions[actions->type].serialize(actions, n);
+	}
+	mnl_attr_nest_end(n, start_actions);
+	return 0;
+fail:
+	return -1;
+}
+
+static struct rte_flow *
+virtio_flow_create(struct rte_eth_dev *dev,
+		   const struct rte_flow_attr *attr,
+		   const struct rte_flow_item pattern[],
+		   const struct rte_flow_action actions[],
+		   struct rte_flow_error *error)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
+ 	struct virtio_user_dev *vudev = virtio_user_get_dev(hw);
 	struct rte_flow *flow = NULL;
 	int ret, len;
 	if (attr->egress) {
@@ -65,55 +476,32 @@ struct rte_flow *virtio_flow_create(struct rte_eth_dev *dev,
 				   NULL, "cannot allocate memory for rte_flow");
 	}
 
-	flow->rule.flow_id = (uint64_t) flow;
-	flow->rule.pattern_size = rte_flow_conv(RTE_FLOW_CONV_OP_PATTERN, NULL, 0, pattern, error);
-	flow->rule.action_size = rte_flow_conv(RTE_FLOW_CONV_OP_ACTIONS, NULL, 0, actions, error);
 
-	ret = rte_flow_conv(RTE_FLOW_CONV_OP_PATTERN, 
-		&flow->rule.flow_spec[0],
-		flow->rule.pattern_size,
-		pattern, error);
-
-	ret = rte_flow_conv(RTE_FLOW_CONV_OP_ACTIONS,
-		&flow->rule.flow_spec[flow->rule.pattern_size],
-		flow->rule.action_size,
-		actions, error);
-
-	if (ret >= 0) {
-	 	struct virtio_user_dev *vudev = virtio_user_get_dev(hw);
-	        ret = vudev->ops->flow_create(vudev, &flow->rule, len);
-		if (ret > 0) {
-			LIST_INSERT_HEAD(&hw->flows, flow, next);
-			return flow;
-		} else {
-			rte_flow_error_set(error, ret, RTE_FLOW_ERROR_TYPE_HANDLE,
-				   NULL, "flow_create error");
-		}
+	ret = rte_flow_conv(RTE_FLOW_CONV_OP_RULE,
+		&flow->rule, len,
+		&rule, error);
+	if (ret < 0) {
+		rte_flow_error_set(error, EINVAL, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
+				   NULL, "cannot copy flow rule");
+		goto fail;
 	}
 
+	if(serialize_rte_flow(hw->port_id, attr, pattern, actions, error, flow))
+		goto fail;
+
+	ret = vudev->ops->flow_create(vudev, (uint8_t*)&flow->nl_rule.nh, len);
+
+	if (ret > 0) {
+		LIST_INSERT_HEAD(&hw->flows, flow, next);
+		return flow;
+	} else {
+		rte_flow_error_set(error, ret, RTE_FLOW_ERROR_TYPE_HANDLE,
+			   NULL, "flow_create error");
+	}
+	
 fail:
 	rte_free(flow);
 	return NULL;
-}
-
-
-/**
- * Validate flow rule.
- *
- * @see rte_flow_validate()
- * @see rte_flow_ops
- */
-static int
-virtio_flow_validate(struct rte_eth_dev *dev,
-			const struct rte_flow_attr *flow_attr,
-			const struct rte_flow_item pattern[],
-			const struct rte_flow_action actions[],
-			struct rte_flow_error *error)
-{
-	rte_flow_error_set(error, EINVAL,
-			   RTE_FLOW_ERROR_TYPE_ATTR,
-			   flow_attr, "invalid");
-	return -1;
 }
 
 /**
@@ -184,7 +572,7 @@ virtio_flow_query(struct rte_eth_dev *dev,
 }
 
 static int
-virtio_flow_dev_dump(struct rte_eth_dev *dev __rte_unused,
+virtio_flow_dev_dump(struct rte_eth_dev *dev,
 		struct rte_flow *flow,
 		FILE *file,
 		struct rte_flow_error *error)
@@ -193,8 +581,8 @@ virtio_flow_dev_dump(struct rte_eth_dev *dev __rte_unused,
 	struct virtio_hw *hw = dev->data->dev_private;
 	if (flow) {
 //		const struct rte_flow_attr *attr = &flow->rule.attr;
-		const struct rte_flow_item *patterns = (struct rte_flow_item *) &flow->rule.flow_spec[0];
-		const struct rte_flow_action *actions = (struct rte_flow_action *) &flow->rule.flow_spec[flow->rule.pattern_size];
+		const struct rte_flow_item *patterns = (struct rte_flow_item *) &flow->rule.pattern_ro;
+		const struct rte_flow_action *actions = (struct rte_flow_action *) &flow->rule.actions_ro;
 
 		char *name = "";
 		fprintf(file, "pattern ");

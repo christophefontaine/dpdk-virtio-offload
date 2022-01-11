@@ -9,6 +9,9 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <linux/netlink.h>
+#include <linux/pkt_cls.h>
+#include <libmnl/libmnl.h>
 
 #include <sys/queue.h>
 #include <sys/stat.h>
@@ -39,6 +42,7 @@
 #include "lib/vhost/rte_vhost.h"
 #include "lib/vhost/vhost.h"
 #include "lib/vhost/vhost_user.h"
+
 
 struct per_port_burst {
 	uint16_t count;
@@ -102,119 +106,152 @@ pkt_burst_flow_forward(struct fwd_stream *fs)
 	get_end_cycles(fs, start_tsc);
 }
 
-int
-flow_create(int port_id, uint8_t *frule, size_t len) {
+#define NLMSG_BUF 1024
+struct nlmsg {
+       struct nlmsghdr nh;
+       char buf[NLMSG_BUF];
+};
+
+struct nl_pattern {
+	char str[64];
+	int (*display)(uint8_t *buf);
+};
+
+static int
+print_eth(uint8_t *buf)
+{
+	char str[32] = "";
+	rte_ether_format_addr(str, 32, (struct rte_ether_addr*)buf);
+	printf("%s", str);
+	return 0;
+}
+
+static int
+print_ipv4(uint8_t *buf)
+{
+	printf("%d.%d.%d.^d", buf[0], buf[1], buf[2], buf[3]);
+	return 0;
+}
+
+static int
+print_ipv6(uint8_t *buf)
+{
+	printf("0x%08x", buf);
+	return 0;
+}
+
+static int
+print_port(uint8_t *buf)
+{
+	printf("%d", *(uint16_t*)buf);
+	return 0;
+}
+
+
+static const struct nl_pattern nl_patterns[] = {
+	[TCA_FLOWER_KEY_ETH_DST]	= { .str="TCA_FLOWER_KEY_ETH_DST"	, .display = print_eth, },
+	[TCA_FLOWER_KEY_ETH_DST_MASK]	= { .str="TCA_FLOWER_KEY_ETH_DST_MASK"	, .display = print_eth, },
+	[TCA_FLOWER_KEY_ETH_SRC]	= { .str="TCA_FLOWER_KEY_ETH_SRC"	, .display = print_eth, },
+	[TCA_FLOWER_KEY_ETH_SRC_MASK]	= { .str="TCA_FLOWER_KEY_ETH_SRC_MASK"	, .display = print_eth, },
+	[TCA_FLOWER_KEY_IPV4_SRC]	= { .str="TCA_FLOWER_KEY_IPV4_SRC"	, .display = print_ipv4, },
+	[TCA_FLOWER_KEY_IPV4_SRC_MASK]	= { .str="TCA_FLOWER_KEY_IPV4_SRC_MASK"	, .display = print_ipv4, },
+	[TCA_FLOWER_KEY_IPV4_DST]	= { .str="TCA_FLOWER_KEY_IPV4_DST"	, .display = print_ipv4, },
+	[TCA_FLOWER_KEY_IPV4_DST_MASK]	= { .str="TCA_FLOWER_KEY_IPV4_DST_MASK"	, .display = print_ipv4, },
+	[TCA_FLOWER_KEY_IPV6_SRC]	= { .str="TCA_FLOWER_KEY_IPV6_SRC"	, .display = print_ipv6, },
+	[TCA_FLOWER_KEY_IPV6_SRC_MASK]	= { .str="TCA_FLOWER_KEY_IPV6_SRC_MASK"	, .display = print_ipv6, },
+	[TCA_FLOWER_KEY_IPV6_DST]	= { .str="TCA_FLOWER_KEY_IPV6_DST"	, .display = print_ipv6, },
+	[TCA_FLOWER_KEY_IPV6_DST_MASK]	= { .str="TCA_FLOWER_KEY_IPV6_DST_MASK"	, .display = print_ipv6, },
+	[TCA_FLOWER_KEY_TCP_SRC]	= { .str="TCA_FLOWER_KEY_TCP_SRC"	, .display = print_port, },	
+	[TCA_FLOWER_KEY_TCP_SRC_MASK]	= { .str="TCA_FLOWER_KEY_TCP_SRC_MASK"	, .display = print_port, },
+	[TCA_FLOWER_KEY_TCP_DST]	= { .str="TCA_FLOWER_KEY_TCP_DST"	, .display = print_port, },	
+	[TCA_FLOWER_KEY_TCP_DST_MASK]	= { .str="TCA_FLOWER_KEY_TCP_DST_MASK"	, .display = print_port, },
+	[TCA_FLOWER_KEY_UDP_SRC]	= { .str="TCA_FLOWER_KEY_UDP_SRC"	, .display = print_port, },	
+	[TCA_FLOWER_KEY_UDP_SRC_MASK]	= { .str="TCA_FLOWER_KEY_UDP_SRC_MASK"	, .display = print_port, },
+	[TCA_FLOWER_KEY_UDP_DST]	= { .str="TCA_FLOWER_KEY_UDP_DST"	, .display = print_port, },
+	[TCA_FLOWER_KEY_UDP_DST_MASK]	= { .str="TCA_FLOWER_KEY_UDP_DST_MASK"	, .display = print_port, },
+	[TCA_FLOWER_KEY_SCTP_SRC]	= { .str="TCA_FLOWER_KEY_SCTP_SRC"	, .display = print_port, },
+	[TCA_FLOWER_KEY_SCTP_SRC_MASK]	= { .str="TCA_FLOWER_KEY_SCTP_SRC_MASK"	, .display = print_port, },
+	[TCA_FLOWER_KEY_SCTP_DST]	= { .str="TCA_FLOWER_KEY_SCTP_DST"	, .display = print_port, },
+	[TCA_FLOWER_KEY_SCTP_DST_MASK]	= { .str="TCA_FLOWER_KEY_SCTP_DST_MASK"	, .display = print_port, },
+};
+static const char *nl_actions[] = {
+};
+
+static int dump_nl_flow(struct nlmsg *msg)
+{
+	return 0;
+}
+
+static int
+flow_create(int port_id, uint8_t *rule, size_t len) {
 	int err;
-	VirtioFlowSpec *rule = (VirtioFlowSpec *)frule;
 
-	struct rte_flow_item *patterns = (struct rte_flow_item *)&rule->flow_spec[0];
-	struct rte_flow_action *actions = (struct rte_flow_action *)&rule->flow_spec[rule->pattern_size];
-	char *name = "";
-	printf("pattern ");
-
-	for(int i=0; patterns[i].type != RTE_FLOW_ITEM_TYPE_END; i++) {
-		err = rte_flow_conv(RTE_FLOW_CONV_OP_ITEM_NAME_PTR,
-	  	      &name, sizeof(char*),
-		      (void*)(uintptr_t)patterns[i].type, NULL);
-		if(err < 0) {
-			printf("Unknown pattern type: %d", patterns[i].type);
-			err = 0;
-		} else {
-			printf("%s", name);
-		}
-		printf(" ");
-		switch(patterns[i].type) {
-		case RTE_FLOW_ITEM_TYPE_ETH:
-			{
-			struct rte_flow_item_eth *fie = (struct rte_flow_item_eth *) patterns[i].spec;
-			char buf[RTE_ETHER_ADDR_FMT_SIZE];
-			rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE, &fie->hdr.src_addr);
-			printf("src %s ", buf);
-			rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE, &fie->hdr.dst_addr);
-			printf("dst %s ", buf);
-			}
-			break;
-		case RTE_FLOW_ITEM_TYPE_PORT_ID:
-			printf("%d ", ((struct rte_flow_item_port_id*)patterns[i].spec)->id);
-			break;
-		default:
-			printf(" UNKNOWN ");
+        struct nlmsghdr *msg = (struct nlmsghdr *)rule;
+	struct nlattr *attr;
+	int sz = mnl_attr_get_len(attr);
+/*
+	for()
+	{
+		if (mnl_attr_get_type(attr) == TCA_FLOW_KEYS) {
 		}
 	}
+*/
 
-	printf(" actions ");
-
-	for (int i=0; actions[i].type != RTE_FLOW_ACTION_TYPE_END; i++) {
-		err = rte_flow_conv(RTE_FLOW_CONV_OP_ACTION_NAME_PTR,
-		  	      &name, sizeof(name),
-			      (void*)(uintptr_t)(actions[i].type), NULL);
-		if(err < 0) {
-			printf("Unknown action type: %d", actions[i].type);
-			err = 0;
-		} else {
-			printf("%s", name);
-		}
-		printf(" ");
-		switch(actions[i].type) {
-		case RTE_FLOW_ACTION_TYPE_PORT_ID:
-			printf("%d ", ((struct rte_flow_action_port_id*)actions[i].conf)->id);
-			break;
-		case RTE_FLOW_ACTION_TYPE_PORT_REPRESENTOR:
-		case RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT:
-			printf("%d ", ((struct rte_flow_action_ethdev*)actions[i].conf)->port_id);
-			break;
-
-		case RTE_FLOW_ACTION_TYPE_DROP:
-			break;
-
-		case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
+//	for(; mnl_attr_ok(attr, sz); attr=mnl_attr_next(attr), sz=mnl_attr_get_len(attr))
+	mnl_attr_for_each(attr, msg, 0)
+	{
+		uint16_t type = mnl_attr_get_type(attr);
+		void *payload = mnl_attr_get_payload(attr);
+		switch(type) {
+			case TCA_FLOW_KEYS:
 			{
-			struct rte_flow_action_set_mac *mac =
-				(struct rte_flow_action_set_mac *) actions[i].conf;
-			char buf[RTE_ETHER_ADDR_FMT_SIZE];
-			rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
-					      (const struct rte_ether_addr *)&mac->mac_addr);
-			printf("%s ", buf);
+				printf("Pattern:\n");
+				struct nlattr * nestedattr;
+				mnl_attr_for_each_nested(nestedattr, attr) {
+				type = mnl_attr_get_type(nestedattr);
+				uint16_t payload_len = mnl_attr_get_payload_len(nestedattr);
+				uint8_t * payload = mnl_attr_get_payload(nestedattr);
+				if (nl_patterns[type].str) {
+					printf("%s ", nl_patterns[type].str);
+					nl_patterns[type].display(payload);
+					printf(" | ");
+				} else {
+					printf("type: %d len %d | ", type, payload_len);
+				}
+				}
 			}
 			break;
-
-		case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
+			case TCA_FLOW_ACT:
 			{
-			struct rte_flow_action_set_mac *mac =
-				(struct rte_flow_action_set_mac *) actions[i].conf;
-			char buf[RTE_ETHER_ADDR_FMT_SIZE];
-			rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
-					      (const struct rte_ether_addr *)&mac->mac_addr);
-			printf("%s ", buf);
+				printf("\nActions:\n");
+				struct nlattr * nestedattr;
+				mnl_attr_for_each_nested(nestedattr, attr) {
+				uint16_t payload_len = mnl_attr_get_payload_len(nestedattr);
+				printf("type: %d len %d | ", type, payload_len);
+				}
 			}
 			break;
+			default:
+				printf("Unknown upper type: %d | ", type);
+				break;
 
-		case RTE_FLOW_ACTION_TYPE_COUNT:
-			if (((struct rte_flow_query_count*)actions[i].conf)->hits_set)
-			printf("hits %lu ", ((struct rte_flow_query_count*)actions[i].conf)->hits);
-			if (((struct rte_flow_query_count*)actions[i].conf)->bytes_set)
-			printf("bytes %lu", ((struct rte_flow_query_count*)actions[i].conf)->bytes);
-			break;
-
-		default:
-			printf(" UNKNOWN ");
-			break;
 		}
 	}
-
 	printf("\n");
 	return 0;
 }
 
-int
+static int
 flow_destroy(int port_id, uint64_t flow_id) {
-	printf("%s pid %d flow_id %lu", __func__, port_id, flow_id);
+	printf("%s pid %d flow_id %lu\n", __func__, port_id, flow_id);
+	fflush(stdout);
 	return 0;
 }
 
-int
+static int
 flow_query(int port_id, uint64_t flow_id, uint64_t *pkt, uint64_t *bytes) {
-	printf("%s pid %d flow_id %lu", __func__, port_id, flow_id);
+	printf("%s pid %d flow_id %lu\n", __func__, port_id, flow_id);
+	fflush(stdout);
 	*pkt = 42;
 	*bytes = 0xba0bab;
 	return 0;

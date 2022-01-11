@@ -28,6 +28,7 @@ sources = files(
         'txonly.c',
         'util.c',
 )
+ext_deps += cc.find_library('libmnl', required: true)
 
 if dpdk_conf.has('RTE_HAS_JANSSON')
     ext_deps += jansson_dep

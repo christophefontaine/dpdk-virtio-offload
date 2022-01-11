@@ -18,6 +18,7 @@ sources += files(
         'virtqueue.c',
 )
 deps += ['kvargs', 'bus_pci']
+ext_deps += cc.find_library('libmnl', required: true)
 
 if arch_subdir == 'x86'
     if not machine_args.contains('-mno-avx512f')

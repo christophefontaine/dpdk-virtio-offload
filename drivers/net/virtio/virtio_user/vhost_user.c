@@ -14,10 +14,10 @@
 #include <rte_alarm.h>
 #include <rte_string_fns.h>
 #include <rte_fbarray.h>
+#include <rte_flow.h>
 
 #include "vhost.h"
 #include "virtio_user_dev.h"
-#include "virtio_flow.h"
 
 struct vhost_user_data {
 	int vhostfd;
@@ -104,8 +104,6 @@ struct vhost_user_msg {
 		struct vhost_vring_state state;
 		struct vhost_vring_addr addr;
 		struct vhost_memory memory;
-		struct VirtioFlowSpec flow_spec;
-		struct VirtioFlowStats flow_stats;
 	} payload;
 } __rte_packed;
 
@@ -1000,7 +998,7 @@ vhost_user_get_intr_fd(struct virtio_user_dev *dev)
 
 static int
 vhost_user_flow_create(struct virtio_user_dev *dev,
-		 VirtioFlowSpec *flow_spec, size_t len)
+		 uint8_t *flow_spec, size_t len)
 {
 	struct vhost_user_data *vudata = dev->backend_data;
 	struct vhost_user_msg msg = {
@@ -1008,7 +1006,7 @@ vhost_user_flow_create(struct virtio_user_dev *dev,
 		.flags = VHOST_USER_VERSION,
 		.size = len,
 	};
-	memcpy(&msg.payload.flow_spec, flow_spec, len);
+	memcpy(&msg.payload.u64, flow_spec, len);
 	return vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
 }
 
@@ -1033,11 +1031,10 @@ vhost_user_flow_query(struct virtio_user_dev *dev,
 	struct vhost_user_msg msg = {
 		.request = VHOST_USER_FLOW_QUERY,
 		.flags = VHOST_USER_VERSION | VHOST_USER_NEED_REPLY,
-		.size = sizeof(VirtioFlowStats), // maybe use rte_flow_count instead ?
+		.size = sizeof(msg.payload.u64),
 	};
-	msg.payload.flow_stats.flow_id = flow_id;
-	msg.payload.flow_stats.packets = 0;
-	msg.payload.flow_stats.bytes = 0;
+	
+	msg.payload.u64 = flow_id;
 	int ret = vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
 	if (ret < 0) {
 		PMD_DRV_LOG(ERR, "Failed to send request");
@@ -1048,9 +1045,8 @@ vhost_user_flow_query(struct virtio_user_dev *dev,
 		PMD_DRV_LOG(ERR, "Failed to read reply");
 		goto err;
 	}
-
-	*packets = msg.payload.flow_stats.packets;
-	*bytes = msg.payload.flow_stats.bytes;
+	*packets = ((struct rte_flow_query_count*)msg.payload.u64)->hits;
+	*bytes = ((struct rte_flow_query_count*)msg.payload.u64)->bytes;
 err:
 	PMD_DRV_LOG(ERR, "Failed to query flow stats");
 	return ret;

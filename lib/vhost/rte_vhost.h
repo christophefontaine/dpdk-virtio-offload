@@ -291,9 +291,13 @@ struct rte_vhost_device_ops {
 
 	/**
 	 * Flow handling callbacks
+	 * only 1 reserved pointer: should we update to 
+	 * a generic "flow_crud" callback ?
+	 * int (*flow_crud)(int vid, enum flow_crud action, uint8_t *data, size_t len);
 	 */
 	int (*flow_create)(int vid, uint8_t *flow_spec, size_t len);
 	int (*flow_destroy)(int vid, uint64_t flow_id);
+	/* Update this cb to handle the different messages to query a flow */
 	int (*flow_query)(int vid, uint64_t flow_id, uint64_t *pkt, uint64_t *bytes);
 
 	void *reserved[1]; /**< Reserved for future extension */

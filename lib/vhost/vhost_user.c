@@ -2770,7 +2770,8 @@ vhost_user_flow_create(struct virtio_net **pdev, struct VhostUserMsg *msg,
 	struct virtio_net *dev = *pdev;
 	if (dev->notify_ops->flow_create) {
 		dev->notify_ops->flow_create(dev->vid,
-				(uint8_t *)(VirtioFlowSpec*)&(msg->payload.u64), msg->size);
+				             (uint8_t *)&(msg->payload.u64),
+					     msg->size);
 		return RTE_VHOST_MSG_RESULT_OK;
 	} else {
 		return RTE_VHOST_MSG_RESULT_NOT_HANDLED;
@@ -2801,10 +2802,11 @@ vhost_user_flow_query(struct virtio_net **pdev, struct VhostUserMsg *msg,
 		return RTE_VHOST_MSG_RESULT_ERR;
 	struct virtio_net *dev = *pdev;
 	if (dev->notify_ops->flow_query) {
-		VirtioFlowStats *stats = (VirtioFlowStats *)&msg->payload.u64;
+                uint64_t flow_id = msg->payload.u64;
+		struct rte_flow_query_count *stats = (struct rte_flow_query_count *)&msg->payload.u64;
 		dev->notify_ops->flow_query(dev->vid,
-				stats->flow_id,
-				&stats->packets,
+				flow_id,
+				&stats->hits,
 				&stats->bytes);
 
 		return RTE_VHOST_MSG_RESULT_REPLY;

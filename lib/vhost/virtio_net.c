@@ -19,6 +19,7 @@
 #include <rte_spinlock.h>
 #include <rte_malloc.h>
 #include <rte_vhost_async.h>
+#include <rte_flow.h>
 
 #include "iotlb.h"
 #include "vhost.h"
@@ -2975,4 +2976,480 @@ out_access_unlock:
 		count += 1;
 
 	return count;
+}
+
+#ifndef VIRTIO_NET_CTRL_FLOW
+#define VIRTIO_NET_CTRL_FLOW		5
+#define VIRTIO_NET_CTRL_FLOW_CREATE	1
+#define VIRTIO_NET_CTRL_FLOW_DESTROY	2
+#define VIRTIO_NET_CTRL_FLOW_QUERY  	3
+#endif
+
+
+static int
+dummy_cb(struct virtio_net *dev, uint8_t cmd,
+		void *data[], size_t data_len[],
+		uint8_t result[2048])
+{
+	memset(result, 0, 2048);
+	return 0;
+}
+
+static int
+flow_crud(struct virtio_net *dev, uint8_t cmd,
+	  void *data[], size_t data_len[],
+	  uint8_t result[2048])
+{
+	switch(cmd) {
+		case VIRTIO_NET_CTRL_FLOW_CREATE:
+			return dev->notify_ops->flow_create(dev->vid, data[0], data_len[0]);
+			break;
+		case VIRTIO_NET_CTRL_FLOW_DESTROY:
+			return dev->notify_ops->flow_destroy(dev->vid, *(uint64_t*)data[0]);
+			break;
+		case VIRTIO_NET_CTRL_FLOW_QUERY:
+			{
+			struct rte_flow_query_count *stats =
+				(struct rte_flow_query_count *)result;
+			return dev->notify_ops->flow_query(dev->vid,
+					*(uint64_t*)data[0],
+					&(stats->hits),
+					&(stats->bytes));
+			}
+			break;
+		default:
+			break;
+	}
+	return -1;
+}
+
+typedef int (*vhost_cq_handler_t)(struct virtio_net *dev,
+		uint8_t cmd,  void *iov, uint8_t iov_cnt,
+		uint8_t raesult[2048]);
+struct ctrl_ops {
+	vhost_cq_handler_t cb;
+	int	arg_count;
+};
+
+
+// no need for arg_count as the virtqueue packes are chained together
+static struct ctrl_ops vhost_cq_handlers[] = {
+	[VIRTIO_NET_CTRL_RX] 		= { .cb = dummy_cb, .arg_count = 1 }, 
+	[VIRTIO_NET_CTRL_MAC] 		= { .cb = dummy_cb, .arg_count = 2 },
+	[VIRTIO_NET_CTRL_VLAN] 		= { .cb = dummy_cb, .arg_count = 1 },
+	[VIRTIO_NET_CTRL_ANNOUNCE] 	= { .cb = dummy_cb, .arg_count = 1 },
+	[VIRTIO_NET_CTRL_MQ] 		= { .cb = dummy_cb, .arg_count = 1 },
+	[VIRTIO_NET_CTRL_GUEST_OFFLOADS]= { .cb = dummy_cb, .arg_count = 1 },
+	[VIRTIO_NET_CTRL_FLOW] 		= { .cb = flow_crud, .arg_count = 1 },
+};
+
+
+static int
+vhost_cq_pop_split(struct virtio_net *dev, struct vhost_virtqueue *vq, void **buf, size_t *buf_len)
+{
+	VHOST_LOG_CONFIG(DEBUG,
+		"vq->avail->idx = %d, vq->last_used_idx = %d, vq->last_avail_idx = %d, "
+		"vq = 0x%x",
+		*(volatile uint16_t *)&vq->avail->idx, vq->last_used_idx, vq->last_avail_idx, 
+		vq);
+
+	struct buf_vector buf_vec[BUF_VECTOR_MAX];
+	uint16_t vec_idx = 0, desc_count = 0;
+
+	struct vring_desc *descs = vq->desc;
+	uint16_t avail_idx = vq->last_avail_idx;
+
+	// 1st desc should be struct virtio_net_hdr *
+	// 2nd (and 3rd ? ) desc is/are the payload
+	// last desc should be the answer, pushed at the end
+	if (unlikely(map_one_desc(dev, vq,
+				buf_vec, &vec_idx,
+				descs[avail_idx].addr,
+				descs[avail_idx].len,
+				VHOST_ACCESS_RO) < 0 )) {
+		VHOST_LOG_DATA(ERR, "map_one_desc failed");
+		return 0;
+	}
+
+	desc_count++;
+	VHOST_LOG_DATA(DEBUG, "(%d) current index %d | end index %d\n",
+			dev->vid, vq->last_avail_idx,
+			vq->last_avail_idx + desc_count);
+
+	vq->last_avail_idx++;
+
+	*buf = buf_vec[0].buf_addr;
+	*buf_len = buf_vec[0].buf_len;
+
+	update_shadow_used_ring_split(vq, vec_idx, *buf_len);
+	vq->shadow_used_idx = 0;
+
+	if (likely(vq->shadow_used_idx)) {
+		flush_shadow_used_ring_split(dev, vq);
+		vhost_vring_call_split(dev, vq);
+	}
+	return desc_count;
+}
+
+static int
+vhost_cq_pop_packed(struct virtio_net *dev, struct vhost_virtqueue *vq, void **buf, size_t *buf_len)
+{
+	VHOST_LOG_CONFIG(DEBUG,
+		"vq->avail_idx = %d, vq->last_avail_idx = %d, vq->last_avail_idx = %d, "
+		"vq = 0x%x",
+		*(volatile uint16_t *)&vq->avail->idx, vq->last_used_idx, vq->last_avail_idx,
+		vq);
+
+	struct buf_vector buf_vec[1];
+	uint16_t vec_idx = 0, desc_count = 0;
+
+	struct vring_packed_desc *descs = vq->desc_packed;
+	uint16_t avail_idx = *(volatile uint16_t *)&vq->avail->idx;
+
+	// 1st desc should be struct virtio_net_hdr *
+	// 2nd desc is the payload
+	// 3rd desc should be the answer, pushed at the end
+	if (unlikely(map_one_desc(dev, vq, buf_vec, &vec_idx,
+				descs[avail_idx].addr,
+				descs[avail_idx].len,
+				VHOST_ACCESS_RO) < 0 )) {
+		VHOST_LOG_DATA(ERR, "map_one_desc failed");
+		return 0;
+	}
+	desc_count++;
+
+	*buf = buf_vec[vec_idx].buf_addr;
+	*buf_len = buf_vec[vec_idx].buf_len;
+
+	if (likely(desc_count > 0)) {
+		if (virtio_net_is_inorder(dev))
+			vhost_shadow_dequeue_single_packed_inorder(vq, vec_idx,
+								   desc_count);
+		else
+			vhost_shadow_dequeue_single_packed(vq, vec_idx,
+					desc_count);
+
+		vq_inc_last_avail_packed(vq, desc_count);
+	}
+	VHOST_LOG_DATA(DEBUG, "(%d) current index %d | end index %d\n",
+			dev->vid, vq->last_avail_idx,
+			vq->last_avail_idx + desc_count);
+	return desc_count;
+}
+
+static int
+vhost_cq_pop(struct virtio_net *dev, struct vhost_virtqueue *vq, void **buf, size_t *buf_len)
+{
+	if (vq_is_packed(dev)) {
+		return vhost_cq_pop_packed(dev, vq, buf, buf_len);
+	} else {
+		return vhost_cq_pop_split(dev, vq, buf, buf_len);
+	}
+}
+
+static void
+vhost_cq_push_split(struct virtio_net *dev, struct vhost_virtqueue *vq, void *buf, size_t buf_len)
+{
+	struct buf_vector buf_vec[1];
+	uint16_t nr_vec = 0;
+	uint16_t buf_id = 0;
+	uint32_t len = 0;
+	uint16_t avail_idx = vq->last_avail_idx;
+	uint16_t desc_count = 1;
+
+	if (unlikely(fill_vec_buf_packed(dev, vq,
+					avail_idx, &desc_count,
+					buf_vec, &nr_vec,
+					&buf_id, &len,
+					VHOST_ACCESS_RW) < 0))
+		return;
+
+	vq_inc_last_avail_packed(vq, 1);
+	vhost_vring_call_split(dev, vq);
+}
+
+static void
+vhost_cq_push_packed(struct virtio_net *dev, struct vhost_virtqueue *vq, void *buf, size_t buf_len)
+{
+	struct buf_vector buf_vec[1];
+	uint16_t nr_vec = 0;
+	uint16_t buf_id = 0;
+	uint32_t len = 0;
+	uint16_t avail_idx = vq->last_avail_idx;
+	uint16_t desc_count = 1;
+
+	if (unlikely(fill_vec_buf_packed(dev, vq,
+					avail_idx, &desc_count,
+					buf_vec, &nr_vec,
+					&buf_id, &len,
+					VHOST_ACCESS_RW) < 0))
+		return;
+	// Copy data to buf_vec ?
+	// if (mbuf_to_desc(dev, vq, pkt, buf_vec, nr_vec, num_buffers, false) < 0)
+	buf_vec[0].buf_len = buf_len;
+	rte_memcpy(buf_vec[0].buf_addr, buf, buf_len);
+	vhost_log_cache_write_iova(dev, vq, buf_vec[0].buf_iova, buf_len);
+	
+	
+
+	vhost_shadow_enqueue_single_packed(dev, vq, &len, &buf_id,
+					   &desc_count, 1);
+
+	vq_inc_last_avail_packed(vq, 1);
+	vhost_vring_call_packed(dev, vq);
+}
+
+static void vhost_cq_push(struct virtio_net *dev, struct vhost_virtqueue *vq, void *buf, size_t buf_len)
+{
+	if (vq_is_packed(dev)) {
+		return vhost_cq_push_packed(dev, vq, buf, buf_len);
+	} else {
+		return vhost_cq_push_split(dev, vq, buf, buf_len);
+	}
+}
+
+
+
+
+uint16_t
+vhost_user_handle_cq_packed(struct virtio_net *dev, uint16_t queue_idx)
+{
+	// struct virtio_user_queue *vq = &dev->packed_queues[queue_idx];
+	struct vhost_virtqueue *vq = dev->virtqueue[queue_idx];
+	// struct vring_packed *vring = dev->packed_vrings[queue_idx];
+	uint16_t n_descs, flags;
+
+	/* Perform a load-acquire barrier in desc_is_avail to
+	 * enforce the ordering between desc flags and desc
+	 * content.
+	 */
+	while (desc_is_avail(&vq->desc[vq->last_used_idx],
+			     vq->used_wrap_counter)) {
+
+		// n_descs = virtio_user_handle_ctrl_msg_packed(dev, vq,
+		//		vq->used_idx);
+		n_descs = 1;
+
+		flags = VRING_DESC_F_WRITE;
+		if (vq->used_wrap_counter)
+			flags |= VRING_PACKED_DESC_F_AVAIL | VRING_PACKED_DESC_F_USED;
+
+		__atomic_store_n(&vq->desc[vq->last_used_idx].flags, flags,
+				 __ATOMIC_RELEASE);
+
+		vq->last_used_idx += n_descs;
+		if (vq->last_used_idx >= vq->size) {
+			vq->last_used_idx -= vq->size;
+			vq->used_wrap_counter ^= 1;
+		}
+	}
+	return n_descs;
+}
+
+static uint32_t
+virtio_user_handle_ctrl_msg(struct virtio_user_dev *dev, struct vhost_virtqueue *vq,
+			    uint16_t idx_hdr)
+{
+	struct virtio_net_ctrl_hdr *hdr;
+	virtio_net_ctrl_ack status = ~0;
+	uint16_t i, idx_data, idx_status;
+	uint32_t n_descs = 0;
+
+	/* locate desc for header, data, and status */
+	idx_data = vq->desc[idx_hdr].next;
+	n_descs++;
+
+	i = idx_data;
+	while (vq->desc[i].flags == VRING_DESC_F_NEXT) {
+		i = vq->desc[i].next;
+		n_descs++;
+	}
+
+	/* locate desc for status */
+	idx_status = i;
+	n_descs++;
+
+	hdr = (void *)(uintptr_t)vq->desc[idx_hdr].addr;
+	if (hdr->class == VIRTIO_NET_CTRL_MQ &&
+	    hdr->cmd == VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET) {
+		uint16_t queues;
+
+		queues = *(uint16_t *)(uintptr_t)vq->desc[idx_data].addr;
+		// status = virtio_user_handle_mq(dev, queues);
+		status = 0;
+	} else if (hdr->class == VIRTIO_NET_CTRL_RX  ||
+		   hdr->class == VIRTIO_NET_CTRL_MAC ||
+		   hdr->class == VIRTIO_NET_CTRL_VLAN) {
+		status = 0;
+	} else if (hdr->class == VIRTIO_NET_CTRL_FLOW ) {
+		status = 0;
+	} else {
+		status = 0;
+	}
+
+	/* Update status */
+	*(virtio_net_ctrl_ack *)(uintptr_t)vq->desc[idx_status].addr = status;
+
+	return n_descs;
+}
+
+uint16_t
+vhost_user_handle_cq_split(struct virtio_net *dev, uint16_t queue_idx)
+{
+	uint16_t avail_idx, desc_idx;
+	struct vring_used_elem *uep;
+	uint16_t n_descs;
+	struct vhost_virtqueue *vq = dev->virtqueue[queue_idx];
+
+	/* Consume avail ring, using used ring idx as first one */
+	while (__atomic_load_n(&vq->used->idx, __ATOMIC_RELAXED)
+	       != vq->avail->idx) {
+		avail_idx = __atomic_load_n(&vq->used->idx, __ATOMIC_RELAXED)
+			    & (vq->size - 1);
+		desc_idx = vq->avail->ring[avail_idx];
+
+		n_descs = virtio_user_handle_ctrl_msg(dev, vq, desc_idx);
+
+		/* Update used ring */
+		uep = &vq->used->ring[avail_idx];
+		uep->id = desc_idx;
+		uep->len = n_descs;
+
+		__atomic_add_fetch(&vq->used->idx, 1, __ATOMIC_RELAXED);
+	}
+	return n_descs;
+}
+
+int
+rte_vhost_ctlqueue_handle_msg(int vid)
+{
+	struct virtio_net *dev;
+	struct vhost_virtqueue *vq = NULL;
+	int ret = -ENOSPC;
+
+	dev = get_device(vid);
+	if (!dev)
+		return -ENOSYS;
+
+	if (!(dev->features & (1ull << VIRTIO_NET_F_CTRL_VQ))) {
+		VHOST_LOG_DATA(ERR,
+			"(%d) %s: control queue not supported.\n",
+			dev->vid, __func__);
+		return -ENOTSUP;
+	}
+
+	/* Last virtqueue is the ctlqueue */
+	if (dev->nr_vring > 2 && dev->nr_vring & 1) {
+		vq = dev->virtqueue[dev->nr_vring-1];
+	}
+	if (!vq) {
+		VHOST_LOG_DATA(ERR,
+			"(%d) %s: control queue not found.\n",
+			dev->vid, __func__);
+		return -ENOSYS;
+	}
+
+	if (!vq->enabled) {
+		VHOST_LOG_DATA(ERR,
+			"(%d) %s: control queue not enabled\n",
+			dev->vid, __func__);
+		return -ENOSYS;
+	}
+
+	if (!dev->notify_ops) {
+		VHOST_LOG_DATA(ERR,
+			"(%d) %s: notfiy ops not defined.\n",
+			dev->vid, __func__);
+		return -ENOTSUP;
+	}
+
+	if (unlikely(rte_spinlock_trylock(&vq->access_lock) == 0))
+		return -1;
+
+	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
+		vhost_user_iotlb_rd_lock(vq);
+
+	if (unlikely(!vq->access_ok))
+		if (unlikely(vring_translate(dev, vq) < 0)) {
+			ret = -ENOMEM;
+			goto out;
+		}
+	// Check if there is a pending packet
+	if (vq_is_packed(dev)) {
+		/*
+		if (!desc_is_avail(&vq->desc_packed[vq->last_avail_idx], vq->avail_wrap_counter)) {
+			goto out;
+		}
+/*
+		uint16_t flags = vq->desc_packed[vq->last_avail_idx].flags;
+		bool avail = !!(flags & (1 << VRING_PACKED_DESC_F_AVAIL));
+		bool used = !!(flags & (1 << VRING_PACKED_DESC_F_USED));
+		if ((avail != used) || (avail == vq->used_wrap_counter)) {
+			goto out;
+		}
+		*/
+		vhost_user_handle_cq_packed(dev, dev->nr_vring-1);
+	} else {
+		/*
+		if ((*(volatile uint16_t *)&vq->avail->idx - vq->last_used_idx) == 0 ) {
+			goto out;
+		}
+		*/
+		vhost_user_handle_cq_split(dev, dev->nr_vring-1);
+	}
+
+	/* dequeue ctrl packets, call the notify ops
+	 * and set the status packet
+	 * 2 (out) + 1 packet (status)
+	 */
+#if 0
+	struct virtio_net_ctrl_hdr *ctrl_hdr;
+	size_t s = 0;
+
+	vhost_cq_pop(dev, vq, (void**)&ctrl_hdr, &s);
+	// Here, ctrl should point to the ctrl header with the proper command
+        int status = VIRTIO_NET_ERR;
+
+	// validate in packet
+	if (s != sizeof(struct virtio_net_ctrl_hdr))
+		goto out;
+
+	if(!vhost_cq_handlers[ctrl_hdr->class].cb)
+		goto out_error;
+
+	void *data[2];
+	size_t data_len[2];
+	for(int i = 0; i < vhost_cq_handlers[ctrl_hdr->class].arg_count; i++) {
+		vhost_cq_pop(dev, vq, &data[i], &data_len[i]);
+	}
+
+	// iov, iov_count
+	struct virtio_net_ctrl_hdr result;
+	result.class = ctrl_hdr->class;
+	result.cmd = ctrl_hdr->cmd;
+	uint8_t answer[2048];
+
+	status = vhost_cq_handlers[ctrl_hdr->class].cb(dev,
+			ctrl_hdr->cmd, data, data_len, answer);
+
+        // s = iov_from_buf(elem->in_sg, elem->in_num, 0, &status, sizeof(status));
+	//
+	vhost_cq_push(dev, vq, &result, sizeof(result));
+	ret = 1;
+	
+out_error:
+	if (vq_is_packed(dev)) {
+		vhost_vring_call_packed(dev, vq);
+	} else {
+		vhost_vring_call_split(dev, vq);
+	}
+
+#endif
+out:
+	if (dev->features & (1ULL << VIRTIO_F_IOMMU_PLATFORM))
+		vhost_user_iotlb_rd_unlock(vq);
+
+out_access_unlock:
+	rte_spinlock_unlock(&vq->access_lock);
+	return ret;
 }

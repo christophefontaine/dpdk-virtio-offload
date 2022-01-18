@@ -613,6 +613,9 @@ alloc_vring_queue(struct virtio_net *dev, uint32_t vring_idx)
 	struct vhost_virtqueue *vq;
 	uint32_t i;
 
+	VHOST_LOG_CONFIG(DEBUG,
+		"dev %u: Alloc vring queue id %u\n",
+		dev->vid, vring_idx);
 	/* Also allocate holes, if any, up to requested vring index. */
 	for (i = 0; i <= vring_idx; i++) {
 		if (dev->virtqueue[i])

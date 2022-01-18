@@ -2,7 +2,6 @@
  * Copyright(c) 2022 Red Hat, Inc.
  */
 
-
 #include <sys/queue.h>
 #include <stdio.h>
 #include <errno.h>
@@ -27,10 +26,12 @@
 #include "virtio_user/virtio_user_dev.h"
 #include "virtio_user/vhost.h"
 
+#include "virtio_ethdev.h"
+
 #define NLMSG_BUF 1024
 struct nlmsg {
 	struct nlmsghdr nh;
-	char buf[NLMSG_BUF];
+	char buf[1500];
 };
 
 struct rte_flow {
@@ -490,13 +491,18 @@ virtio_flow_create(struct rte_eth_dev *dev,
 		goto fail;
 
 	ret = vudev->ops->flow_create(vudev, (uint8_t*)&flow->nl_rule.nh, len);
+	struct virtio_pmd_ctrl ctrl;
+	ctrl.hdr.class = VIRTIO_NET_CTRL_FLOW;
+	ctrl.hdr.cmd = VIRTIO_NET_CTRL_FLOW_CREATE;
+	memcpy(ctrl.data, &flow->nl_rule.nh, len);
+	ret = virtio_send_command(hw->cvq, &ctrl, &len, 1);
 
-	if (ret > 0) {
+	if (ret) {
+		rte_flow_error_set(error, ret, RTE_FLOW_ERROR_TYPE_HANDLE,
+			   NULL, "virtio_send_command error");
+	} else {
 		LIST_INSERT_HEAD(&hw->flows, flow, next);
 		return flow;
-	} else {
-		rte_flow_error_set(error, ret, RTE_FLOW_ERROR_TYPE_HANDLE,
-			   NULL, "flow_create error");
 	}
 	
 fail:

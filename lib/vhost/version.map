@@ -84,6 +84,9 @@ EXPERIMENTAL {
 
 	# added in 21.11
 	rte_vhost_get_monitor_addr;
+
+	# Added in 22.XX
+	rte_vhost_ctlqueue_handle_msg;
 };
 
 INTERNAL {

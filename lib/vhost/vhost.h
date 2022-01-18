@@ -391,7 +391,8 @@ struct virtio_net {
 
 	int			extbuf;
 	int			linearbuf;
-	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2];
+	/* Last vhost_virtqueue is used as the ctl_virtqueue */
+	struct vhost_virtqueue	*virtqueue[VHOST_MAX_QUEUE_PAIRS * 2 + 1];
 	struct inflight_mem_info *inflight_info;
 #define IF_NAME_SZ (PATH_MAX > IFNAMSIZ ? PATH_MAX : IFNAMSIZ)
 	char			ifname[IF_NAME_SZ];

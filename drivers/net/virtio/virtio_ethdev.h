@@ -47,8 +47,7 @@
 	 1u << VIRTIO_NET_F_CSUM           |	\
 	 1u << VIRTIO_NET_F_HOST_TSO4      |	\
 	 1u << VIRTIO_NET_F_HOST_TSO6      |	\
-	 1ULL << VIRTIO_NET_F_RSS	   |    \
-	 1ULL << VIRTIO_NET_F_FLOW_OFFLOAD)
+	 1ULL << VIRTIO_NET_F_RSS)
 
 extern const struct eth_dev_ops virtio_user_secondary_eth_dev_ops;
 extern const struct rte_flow_ops virtio_flow_ops;

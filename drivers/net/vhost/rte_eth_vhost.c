@@ -110,6 +110,7 @@ struct pmd_internal {
 	int vid;
 	rte_atomic32_t started;
 	uint8_t vlan_strip;
+	pthread_t cq_threadid;
 };
 
 struct internal_list {
@@ -1133,6 +1134,24 @@ eth_dev_configure(struct rte_eth_dev *dev)
 	return 0;
 }
 
+static void *
+rte_pmd_vhost_ctlqueue_handler(void * arg)
+{
+	int ret;
+	struct pmd_internal *internal = arg;
+	// sleep(10);
+	while(1) {
+		// sleep(2);
+		if(rte_atomic32_read(&internal->dev_attached)) {
+			do {
+			ret = rte_vhost_ctlqueue_handle_msg(internal->vid);
+			} while (ret >= 0);
+		}
+	}
+	return NULL;
+}
+
+
 static int
 eth_dev_start(struct rte_eth_dev *eth_dev)
 {
@@ -1154,6 +1173,11 @@ eth_dev_start(struct rte_eth_dev *eth_dev)
 	rte_atomic32_set(&internal->started, 1);
 	update_queuing_status(eth_dev);
 
+	rte_ctrl_thread_create(&internal->cq_threadid, "pmd_vhost_ctlqueue",
+			NULL, rte_pmd_vhost_ctlqueue_handler,
+			eth_dev);
+	pthread_detach(internal->cq_threadid);
+
 	return 0;
 }
 
@@ -1165,6 +1189,7 @@ eth_dev_stop(struct rte_eth_dev *dev)
 	dev->data->dev_started = 0;
 	rte_atomic32_set(&internal->started, 0);
 	update_queuing_status(dev);
+	pthread_join(internal->cq_threadid, NULL);
 
 	return 0;
 }
@@ -1510,8 +1535,8 @@ eth_dev_vhost_create(struct rte_vdev_device *dev, char *iface_name,
 	eth_dev->tx_pkt_burst = eth_vhost_tx;
 
 	rte_eth_dev_probing_finish(eth_dev);
-	return 0;
 
+	return 0;
 error:
 	if (internal)
 		rte_free(internal->iface_name);

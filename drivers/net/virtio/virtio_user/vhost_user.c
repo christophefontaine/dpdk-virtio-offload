@@ -530,7 +530,7 @@ vhost_user_set_vring(struct virtio_user_dev *dev, enum vhost_user_request req,
 	return 0;
 }
 
-static int
+int
 vhost_user_set_vring_enable(struct virtio_user_dev *dev, struct vhost_vring_state *state)
 {
 	return vhost_user_set_vring(dev, VHOST_USER_SET_VRING_ENABLE, state);
@@ -914,6 +914,18 @@ vhost_user_enable_queue_pair(struct virtio_user_dev *dev,
 
 	if (data->vhostfd < 0)
 		return 0;
+
+	/* Hack: Enable control queue */
+	if (dev->features & (1 << VIRTIO_NET_F_CTRL_VQ) &&
+	    (pair_idx+1) == dev->max_queue_pairs ) {
+		struct vhost_vring_state state = {
+			.index = dev->max_queue_pairs * 2,
+			.num = enable,
+		};
+
+		if (vhost_user_set_vring_enable(dev, &state))
+			return -1;
+	}
 
 	if (dev->qp_enabled[pair_idx] == enable)
 		return 0;

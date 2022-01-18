@@ -41,7 +41,7 @@
 
 #include "lib/vhost/rte_vhost.h"
 #include "lib/vhost/vhost.h"
-#include "lib/vhost/vhost_user.h"
+// #include "lib/vhost/vhost_user.h"
 
 
 struct per_port_burst {
@@ -265,7 +265,12 @@ flow_setup(portid_t pi)
 	
 	if (vid >= 0) {
 		rte_vhost_get_ifname(vid, path, 256);
-		struct rte_vhost_device_ops * ops = vhost_driver_callback_get(path);
+		/* Ugly hack, but rte_vhost_driver_callback_register is already done 
+		 * in the vhost pmd. Can only update the ops after init.
+		 * This shall be done by OVS as it doesn't use pmd vhost,
+		 * but only the vhost lib.
+		 */
+		struct rte_vhost_device_ops * ops = (struct rte_vhost_device_ops *) vhost_driver_callback_get(path);
 		ops->flow_create = flow_create;
 		ops->flow_destroy = flow_destroy;
 		ops->flow_query = flow_query;

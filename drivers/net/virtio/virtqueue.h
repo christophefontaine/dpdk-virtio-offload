@@ -341,6 +341,15 @@ struct virtio_net_hdr {
 	uint16_t csum_offset; /**< Offset after that to place checksum */
 };
 
+
+/* If virtio flow offload is supported by the host
+ * define the CRUD messages
+ * */
+#define VIRTIO_NET_CTRL_FLOW		5
+#define VIRTIO_NET_CTRL_FLOW_CREATE 	1
+#define VIRTIO_NET_CTRL_FLOW_DESTROY 	2
+#define VIRTIO_NET_CTRL_FLOW_QUERY	3
+
 /**
  * This is the version of the header to use when the MRG_RXBUF
  * feature has been negotiated.
@@ -660,6 +669,9 @@ virtqueue_notify(struct virtqueue *vq)
 	ASSIGN_UNLESS_EQUAL((hdr_)->gso_size, 0);	\
 	ASSIGN_UNLESS_EQUAL((hdr_)->hdr_len, 0);	\
 } while (0)
+
+int virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
+		                    int *dlen, int pkt_num);
 
 static inline void
 virtqueue_xmit_offload(struct virtio_net_hdr *hdr, struct rte_mbuf *cookie)

@@ -134,6 +134,12 @@ virtio_user_queue_setup(struct virtio_user_dev *dev,
 		}
 	}
 
+	if (fn(dev, dev->max_queue_pairs * 2) < 0) {
+		PMD_DRV_LOG(ERR, "(%s) setup ctl vq %u failed", dev->path, i);
+		return -1;
+	}
+
+
 	return 0;
 }
 
@@ -154,7 +160,7 @@ virtio_user_dev_set_features(struct virtio_user_dev *dev)
 	/* Strip VIRTIO_NET_F_MAC, as MAC address is handled in vdev init */
 	features &= ~(1ull << VIRTIO_NET_F_MAC);
 	/* Strip VIRTIO_NET_F_CTRL_VQ, as devices do not really need to know */
-	features &= ~(1ull << VIRTIO_NET_F_CTRL_VQ);
+	/* features &= ~(1ull << VIRTIO_NET_F_CTRL_VQ); */
 	features &= ~(1ull << VIRTIO_NET_F_STATUS);
 	ret = dev->ops->set_features(dev, features);
 	if (ret < 0)
@@ -165,6 +171,9 @@ error:
 
 	return ret;
 }
+
+int
+vhost_user_set_vring_enable(struct virtio_user_dev *dev, struct vhost_vring_state *state);
 
 int
 virtio_user_start_device(struct virtio_user_dev *dev)
@@ -203,6 +212,13 @@ virtio_user_start_device(struct virtio_user_dev *dev)
 	ret = dev->ops->enable_qp(dev, 0, 1);
 	if (ret < 0)
 		goto error;
+
+
+	struct vhost_vring_state state = {
+		.index = dev->max_queue_pairs * 2,
+		.num = 1,
+	};
+	vhost_user_set_vring_enable(dev, &state);
 
 	dev->started = true;
 
@@ -347,7 +363,7 @@ virtio_user_dev_init_notify(struct virtio_user_dev *dev)
 	int callfd;
 	int kickfd;
 
-	for (i = 0; i < dev->max_queue_pairs * 2; i++) {
+	for (i = 0; i < dev->max_queue_pairs * 2 + 1; i++) {
 		/* May use invalid flag, but some backend uses kickfd and
 		 * callfd as criteria to judge if dev is alive. so finally we
 		 * use real event_fd.
@@ -388,7 +404,7 @@ virtio_user_dev_uninit_notify(struct virtio_user_dev *dev)
 {
 	uint32_t i;
 
-	for (i = 0; i < dev->max_queue_pairs * 2; ++i) {
+	for (i = 0; i < dev->max_queue_pairs * 2 + 1; ++i) {
 		if (dev->kickfds[i] >= 0) {
 			close(dev->kickfds[i]);
 			dev->kickfds[i] = -1;
@@ -463,7 +479,8 @@ virtio_user_mem_event_cb(enum rte_mem_event type __rte_unused,
 		goto exit;
 
 	/* Step 1: pause the active queues */
-	for (i = 0; i < dev->queue_pairs; i++) {
+	// Last queue_pair is used for control queue
+	for (i = 0; i < dev->queue_pairs+1; i++) {
 		ret = dev->ops->enable_qp(dev, i, 0);
 		if (ret < 0)
 			goto exit;
@@ -475,7 +492,7 @@ virtio_user_mem_event_cb(enum rte_mem_event type __rte_unused,
 		goto exit;
 
 	/* Step 3: resume the active queues */
-	for (i = 0; i < dev->queue_pairs; i++) {
+	for (i = 0; i < dev->queue_pairs+1; i++) {
 		ret = dev->ops->enable_qp(dev, i, 1);
 		if (ret < 0)
 			goto exit;
@@ -579,7 +596,8 @@ virtio_user_dev_init(struct virtio_user_dev *dev, char *path, int queues,
 
 	dev->started = 0;
 	dev->max_queue_pairs = queues;
-	dev->queue_pairs = 1; /* mq disabled by default */
+	dev->queue_pairs =  1; /* mq disabled by default */
+	dev->queue_pairs =  dev->max_queue_pairs;
 	dev->queue_size = queue_size;
 	dev->is_server = server;
 	dev->mac_specified = 0;
@@ -706,7 +724,6 @@ virtio_user_handle_mq(struct virtio_user_dev *dev, uint16_t q_pairs)
 		ret |= dev->ops->enable_qp(dev, i, 0);
 
 	dev->queue_pairs = q_pairs;
-
 	return ret;
 }
 
@@ -744,6 +761,9 @@ virtio_user_handle_ctrl_msg(struct virtio_user_dev *dev, struct vring *vring,
 		   hdr->class == VIRTIO_NET_CTRL_MAC ||
 		   hdr->class == VIRTIO_NET_CTRL_VLAN) {
 		status = 0;
+	} else if (hdr->class == VIRTIO_NET_CTRL_FLOW ) {
+		n_descs = 0;
+		status = 0;
 	}
 
 	/* Update status */
@@ -761,7 +781,7 @@ desc_is_avail(struct vring_packed_desc *desc, bool wrap_counter)
 		wrap_counter != !!(flags & VRING_PACKED_DESC_F_USED);
 }
 
-static uint32_t
+static uint16_t
 virtio_user_handle_ctrl_msg_packed(struct virtio_user_dev *dev,
 				   struct vring_packed *vring,
 				   uint16_t idx_hdr)
@@ -770,7 +790,7 @@ virtio_user_handle_ctrl_msg_packed(struct virtio_user_dev *dev,
 	virtio_net_ctrl_ack status = ~0;
 	uint16_t idx_data, idx_status;
 	/* initialize to one, header is first */
-	uint32_t n_descs = 1;
+	uint16_t n_descs = 1;
 
 	/* locate desc for header, data, and status */
 	idx_data = idx_hdr + 1;
@@ -799,6 +819,8 @@ virtio_user_handle_ctrl_msg_packed(struct virtio_user_dev *dev,
 		   hdr->class == VIRTIO_NET_CTRL_MAC ||
 		   hdr->class == VIRTIO_NET_CTRL_VLAN) {
 		status = 0;
+	} else if (hdr->class == VIRTIO_NET_CTRL_FLOW ) {
+		n_descs = 0;
 	}
 
 	/* Update status */
@@ -812,7 +834,7 @@ virtio_user_handle_ctrl_msg_packed(struct virtio_user_dev *dev,
 	return n_descs;
 }
 
-void
+uint16_t
 virtio_user_handle_cq_packed(struct virtio_user_dev *dev, uint16_t queue_idx)
 {
 	struct virtio_user_queue *vq = &dev->packed_queues[queue_idx];
@@ -842,14 +864,15 @@ virtio_user_handle_cq_packed(struct virtio_user_dev *dev, uint16_t queue_idx)
 			vq->used_wrap_counter ^= 1;
 		}
 	}
+	return n_descs;
 }
 
-void
+uint16_t
 virtio_user_handle_cq(struct virtio_user_dev *dev, uint16_t queue_idx)
 {
 	uint16_t avail_idx, desc_idx;
 	struct vring_used_elem *uep;
-	uint32_t n_descs;
+	uint16_t n_descs;
 	struct vring *vring = &dev->vrings[queue_idx];
 
 	/* Consume avail ring, using used ring idx as first one */
@@ -868,6 +891,7 @@ virtio_user_handle_cq(struct virtio_user_dev *dev, uint16_t queue_idx)
 
 		__atomic_add_fetch(&vring->used->idx, 1, __ATOMIC_RELAXED);
 	}
+	return n_descs;
 }
 
 int

@@ -422,9 +422,12 @@ vhost_user_set_features(struct virtio_net **pdev, struct VhostUserMsg *msg,
 		"negotiated Virtio features: 0x%" PRIx64 "\n", dev->features);
 	VHOST_LOG_CONFIG(DEBUG,
 		"(%d) mergeable RX buffers %s, virtio 1 %s\n",
+		"(%d) mergeable RX buffers %s, virtio 1 %s, ctrl queue %s\n",
 		dev->vid,
 		(dev->features & (1 << VIRTIO_NET_F_MRG_RXBUF)) ? "on" : "off",
-		(dev->features & (1ULL << VIRTIO_F_VERSION_1)) ? "on" : "off");
+		(dev->features & (1ULL << VIRTIO_F_VERSION_1)) ? "on" : "off",
+		(dev->features & (1 << VIRTIO_NET_F_CTRL_VQ)) ? "on": "off");
+
 
 	if ((dev->flags & VIRTIO_DEV_BUILTIN_VIRTIO_NET) &&
 	    !(dev->features & (1ULL << VIRTIO_NET_F_MQ))) {

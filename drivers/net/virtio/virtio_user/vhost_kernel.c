@@ -611,3 +611,4 @@ struct virtio_user_backend_ops virtio_ops_kernel = {
 	.update_link_state = vhost_kernel_update_link_state,
 	.get_intr_fd = vhost_kernel_get_intr_fd,
 };
+

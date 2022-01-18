@@ -1070,6 +1070,9 @@ __rte_experimental
 int
 rte_vhost_slave_config_change(int vid, bool need_reply);
 
+__rte_experimental
+int rte_vhost_ctlqueue_handle_msg(int vid);
+
 #ifdef __cplusplus
 }
 #endif

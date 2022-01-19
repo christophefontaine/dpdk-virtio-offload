@@ -2762,16 +2762,16 @@ vhost_user_set_status(struct virtio_net **pdev,
 }
 
 static int
-vhost_user_flow_create(struct virtio_net **pdev, struct VhostUserMsg *msg,
+vhost_user_flow_create(struct virtio_net **pdev, struct vhu_msg_context *ctx,
 			int main_fd __rte_unused)
 {
-	if (validate_msg_fds(msg, 0) != 0)
+	if (validate_msg_fds(ctx, 0) != 0)
 		return RTE_VHOST_MSG_RESULT_ERR;
 	struct virtio_net *dev = *pdev;
 	if (dev->notify_ops->flow_create) {
 		dev->notify_ops->flow_create(dev->vid,
-				             (uint8_t *)&(msg->payload.u64),
-					     msg->size);
+				             (uint8_t *)&(ctx->msg.payload.u64),
+					     ctx->msg.size);
 		return RTE_VHOST_MSG_RESULT_OK;
 	} else {
 		return RTE_VHOST_MSG_RESULT_NOT_HANDLED;
@@ -2779,15 +2779,15 @@ vhost_user_flow_create(struct virtio_net **pdev, struct VhostUserMsg *msg,
 }
 
 static int
-vhost_user_flow_destroy(struct virtio_net **pdev, struct VhostUserMsg *msg,
+vhost_user_flow_destroy(struct virtio_net **pdev, struct vhu_msg_context *ctx,
 			int main_fd __rte_unused)
 {
-	if (validate_msg_fds(msg, 0) != 0)
+	if (validate_msg_fds(ctx, 0) != 0)
 		return RTE_VHOST_MSG_RESULT_ERR;
 	struct virtio_net *dev = *pdev;
 
 	if (dev->notify_ops->flow_destroy) {
-		dev->notify_ops->flow_destroy(dev->vid, msg->payload.u64);
+		dev->notify_ops->flow_destroy(dev->vid, ctx->msg.payload.u64);
 		return RTE_VHOST_MSG_RESULT_OK;
 	} else {
 		return RTE_VHOST_MSG_RESULT_NOT_HANDLED;
@@ -2795,15 +2795,15 @@ vhost_user_flow_destroy(struct virtio_net **pdev, struct VhostUserMsg *msg,
 }
 
 static int
-vhost_user_flow_query(struct virtio_net **pdev, struct VhostUserMsg *msg,
+vhost_user_flow_query(struct virtio_net **pdev, struct vhu_msg_context *ctx,
 			int main_fd __rte_unused)
 {
-	if (validate_msg_fds(msg, 0) != 0)
+	if (validate_msg_fds(ctx, 0) != 0)
 		return RTE_VHOST_MSG_RESULT_ERR;
 	struct virtio_net *dev = *pdev;
 	if (dev->notify_ops->flow_query) {
-                uint64_t flow_id = msg->payload.u64;
-		struct rte_flow_query_count *stats = (struct rte_flow_query_count *)&msg->payload.u64;
+                uint64_t flow_id = ctx->msg.payload.u64;
+		struct rte_flow_query_count *stats = (struct rte_flow_query_count *)&ctx->msg.payload.u64;
 		dev->notify_ops->flow_query(dev->vid,
 				flow_id,
 				&stats->hits,

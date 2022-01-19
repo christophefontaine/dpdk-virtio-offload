@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <linux/vhost.h>
+#include <linux/rtnetlink.h>
 
 #include "rte_vhost.h"
 
@@ -128,6 +129,11 @@ typedef struct VhostUserInflight {
 	uint16_t queue_size;
 } VhostUserInflight;
 
+struct vhost_flow_msg {
+	struct nlmsg_hdr;
+	uint8_t data[1024];
+};
+
 typedef struct VhostUserMsg {
 	union {
 		uint32_t master; /* a VhostUserRequest value */
@@ -151,8 +157,8 @@ typedef struct VhostUserMsg {
 		VhostUserCryptoSessionParam crypto_session;
 		VhostUserVringArea area;
 		VhostUserInflight inflight;
+		struct vhost_flow_msg flow_spec;
 	} payload;
-	/* Nothing should be added after the payload */
 } __rte_packed VhostUserMsg;
 
 struct vhu_msg_context {

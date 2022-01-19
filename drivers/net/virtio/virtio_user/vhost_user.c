@@ -89,6 +89,11 @@ enum vhost_user_request {
 	VHOST_USER_MAX
 };
 
+struct vhost_flow_msg {
+	struct nlmsg_hdr;
+	uint8_t data[1024];
+};
+
 struct vhost_user_msg {
 	enum vhost_user_request request;
 
@@ -104,6 +109,7 @@ struct vhost_user_msg {
 		struct vhost_vring_state state;
 		struct vhost_vring_addr addr;
 		struct vhost_memory memory;
+		struct vhost_flow_msg flow_spec;
 	} payload;
 } __rte_packed;
 

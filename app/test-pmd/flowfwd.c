@@ -129,7 +129,7 @@ print_eth(uint8_t *buf)
 static int
 print_ipv4(uint8_t *buf)
 {
-	printf("%d.%d.%d.^d", buf[0], buf[1], buf[2], buf[3]);
+	printf("%d.%d.%d.%d", buf[0], buf[1], buf[2], buf[3]);
 	return 0;
 }
 
@@ -147,12 +147,20 @@ print_port(uint8_t *buf)
 	return 0;
 }
 
+static int
+print_vlan(uint8_t *buf)
+{
+	printf("%d", *(uint16_t*)buf);
+	return 0;
+}
+
 
 static const struct nl_pattern nl_patterns[] = {
 	[TCA_FLOWER_KEY_ETH_DST]	= { .str="TCA_FLOWER_KEY_ETH_DST"	, .display = print_eth, },
 	[TCA_FLOWER_KEY_ETH_DST_MASK]	= { .str="TCA_FLOWER_KEY_ETH_DST_MASK"	, .display = print_eth, },
 	[TCA_FLOWER_KEY_ETH_SRC]	= { .str="TCA_FLOWER_KEY_ETH_SRC"	, .display = print_eth, },
 	[TCA_FLOWER_KEY_ETH_SRC_MASK]	= { .str="TCA_FLOWER_KEY_ETH_SRC_MASK"	, .display = print_eth, },
+	[TCA_FLOWER_KEY_VLAN_ID]	= { .str="TCA_FLOWER_KEY_VLAN_ID"	, .display = print_vlan, },
 	[TCA_FLOWER_KEY_IPV4_SRC]	= { .str="TCA_FLOWER_KEY_IPV4_SRC"	, .display = print_ipv4, },
 	[TCA_FLOWER_KEY_IPV4_SRC_MASK]	= { .str="TCA_FLOWER_KEY_IPV4_SRC_MASK"	, .display = print_ipv4, },
 	[TCA_FLOWER_KEY_IPV4_DST]	= { .str="TCA_FLOWER_KEY_IPV4_DST"	, .display = print_ipv4, },
@@ -189,15 +197,7 @@ flow_create(int port_id, uint8_t *rule, size_t len) {
         struct nlmsghdr *msg = (struct nlmsghdr *)rule;
 	struct nlattr *attr;
 	int sz = mnl_attr_get_len(attr);
-/*
-	for()
-	{
-		if (mnl_attr_get_type(attr) == TCA_FLOW_KEYS) {
-		}
-	}
-*/
 
-//	for(; mnl_attr_ok(attr, sz); attr=mnl_attr_next(attr), sz=mnl_attr_get_len(attr))
 	mnl_attr_for_each(attr, msg, 0)
 	{
 		uint16_t type = mnl_attr_get_type(attr);
@@ -211,7 +211,7 @@ flow_create(int port_id, uint8_t *rule, size_t len) {
 				type = mnl_attr_get_type(nestedattr);
 				uint16_t payload_len = mnl_attr_get_payload_len(nestedattr);
 				uint8_t * payload = mnl_attr_get_payload(nestedattr);
-				if (nl_patterns[type].str) {
+				if (nl_patterns[type].display) {
 					printf("%s ", nl_patterns[type].str);
 					nl_patterns[type].display(payload);
 					printf(" | ");

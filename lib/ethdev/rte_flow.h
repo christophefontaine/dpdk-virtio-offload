@@ -4853,6 +4853,25 @@ rte_flow_flex_item_release(uint16_t port_id,
 			   const struct rte_flow_item_flex_handle *handle,
 			   struct rte_flow_error *error);
 
+/**
+ * Dump a single flow description
+ *
+ * @param[in] file
+ *   A pointer to a file for output.
+ * @param[in] attr
+ *   Flow rule attributes.
+ * @param[in] pattern
+ *   Pattern specification (list terminated by the END pattern item).
+ * @param[in] actions
+ *   Associated actions (list terminated by the END action).
+ *
+ */
+__rte_experimental
+void
+rte_flow_describe(FILE *file,
+		  const struct rte_flow_attr *attr,
+		  const struct rte_flow_item pattern[],
+		  const struct rte_flow_action actions[]);
 #ifdef __cplusplus
 }
 #endif

@@ -256,6 +256,9 @@ EXPERIMENTAL {
 	rte_flow_flex_item_create;
 	rte_flow_flex_item_release;
 	rte_flow_pick_transfer_proxy;
+
+	# added in 22.XX
+	rte_flow_describe;
 };
 
 INTERNAL {

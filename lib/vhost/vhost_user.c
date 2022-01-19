@@ -2770,7 +2770,7 @@ vhost_user_flow_create(struct virtio_net **pdev, struct vhu_msg_context *ctx,
 	struct virtio_net *dev = *pdev;
 	if (dev->notify_ops->flow_create) {
 		dev->notify_ops->flow_create(dev->vid,
-				             (uint8_t *)&(ctx->msg.payload.u64),
+				             (uint8_t *)&(ctx->msg.payload.flow_spec),
 					     ctx->msg.size);
 		return RTE_VHOST_MSG_RESULT_OK;
 	} else {

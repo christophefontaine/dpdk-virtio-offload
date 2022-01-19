@@ -327,10 +327,10 @@ static int
 virtio_flow_actions_drop(const struct rte_flow_action *action __rte_unused,
 			 struct nlmsghdr *msg)
 {
-	uint8_t ;
+	uint8_t dummy = 0;
 	mnl_attr_put(msg,
-		  TCA_FLOWER_ACT, RTE_ETHER_ADDR_LEN,
-		  &conf->id);
+		  42, 1,
+		  &dummy);
 	return 0;
 }
 
@@ -504,6 +504,55 @@ fail:
 	return -1;
 }
 
+void rule_ptrs_to_offset(struct rte_flow_conv_rule *rule)
+{
+	uintptr_t base = (uintptr_t) rule;
+	struct rte_flow_item *items = rule->pattern; 
+	struct rte_flow_action *actions = rule->actions;
+
+	for (; items->type != RTE_FLOW_ITEM_TYPE_END; ++items) {
+		if (items->spec)
+			items->spec = (void*)((uintptr_t)items->spec - base);
+		if (items->last)
+			items->last = (void*)((uintptr_t)items->last - base);
+		if (items->mask)
+			items->mask = (void*)((uintptr_t)items->mask - base);
+	}
+	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; ++actions) {
+		if (actions->conf)
+			actions->conf = (void*)((uintptr_t)actions->conf - base);
+	}
+
+	/* Provide an offset to the beginning of the header */
+	rule->attr = (struct rte_flow_attr *) ((uintptr_t)rule->attr - base);
+	rule->pattern = (struct rte_flow_item *) ((uintptr_t)rule->pattern - base);
+	rule->actions = (struct rte_flow_action *) ((uintptr_t)rule->actions - base);
+}
+
+void rule_offset_to_ptrs(struct rte_flow_conv_rule *rule)
+{
+	uintptr_t base = (uintptr_t) rule;
+	rule->attr = (struct rte_flow_attr *) (base + (uintptr_t)rule->attr);
+	rule->pattern = (struct rte_flow_item *) (base + (uintptr_t)rule->pattern);
+	rule->actions = (struct rte_flow_action *) (base + (uintptr_t)rule->actions);
+
+	struct rte_flow_item *items = rule->pattern; 
+	struct rte_flow_action *actions = rule->actions;
+
+	for (; items->type != RTE_FLOW_ITEM_TYPE_END; ++items) {
+		if (items->spec)
+			items->spec = (void*)((uintptr_t)items->spec + base);
+		if (items->last)
+			items->last = (void*)((uintptr_t)items->last + base);
+		if (items->mask)
+			items->mask = (void*)((uintptr_t)items->mask + base);
+	}
+	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; ++actions) {
+		if (actions->conf)
+			actions->conf = (void*)((uintptr_t)actions->conf + base);
+	}
+}
+
 static struct rte_flow *
 virtio_flow_create(struct rte_eth_dev *dev,
 		   const struct rte_flow_attr *attr,
@@ -514,7 +563,7 @@ virtio_flow_create(struct rte_eth_dev *dev,
 	struct virtio_hw *hw = dev->data->dev_private;
  	struct virtio_user_dev *vudev = virtio_user_get_dev(hw);
 	struct rte_flow *flow = NULL;
-	int ret, len;
+	int ret, len, flow_len;
 	if (attr->egress) {
 		rte_flow_error_set(error, EINVAL,
 			   RTE_FLOW_ERROR_TYPE_ATTR,
@@ -528,18 +577,18 @@ virtio_flow_create(struct rte_eth_dev *dev,
 		.actions_ro = actions,
 	};
 
-	len = rte_flow_conv(RTE_FLOW_CONV_OP_RULE, NULL, 0, &rule, error);
-	if (len < 0)
+	flow_len = rte_flow_conv(RTE_FLOW_CONV_OP_RULE, NULL, 0, &rule, error);
+	if (flow_len < 0)
 		return NULL;
 
-	flow = rte_zmalloc(__func__, offsetof(struct rte_flow, rule) + len, 0);
+	flow = rte_zmalloc(__func__, offsetof(struct rte_flow, rule) + flow_len, 0);
 	if (!flow) {
 		rte_flow_error_set(error, ENOMEM, RTE_FLOW_ERROR_TYPE_HANDLE,
 				   NULL, "cannot allocate memory for rte_flow");
 	}
 
 	ret = rte_flow_conv(RTE_FLOW_CONV_OP_RULE,
-		&flow->rule, len,
+		&flow->rule, flow_len,
 		&rule, error);
 	if (ret < 0) {
 		rte_flow_error_set(error, EINVAL, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
@@ -547,11 +596,20 @@ virtio_flow_create(struct rte_eth_dev *dev,
 		goto fail;
 	}
 
+	/*
 	struct vhost_flow_msg nl_rule;
 	len = serialize_rte_flow(hw->port_id, attr, pattern, actions, error, &nl_rule.nh);
-	if(len <=0 || len > 1024)
+	if(len <=0 || len > NLMSG_BUF){
+		rte_flow_error_set(error, ret, RTE_FLOW_ERROR_TYPE_HANDLE,
+			   NULL, "Flow description too big to fit in 1 nl message.");
 		goto fail;
-	ret = vudev->ops->flow_create(vudev, (uint8_t*)&nl_rule.nh, len);
+	}
+	*/
+
+	rule_ptrs_to_offset(&flow->rule);
+	ret = vudev->ops->flow_create(vudev, (uint8_t*)&flow->rule, flow_len);
+	// ret = vudev->ops->flow_create(vudev, (uint8_t*)&nl_rule.nh, len);
+	rule_offset_to_ptrs(&flow->rule);
 
 	if (ret > 0) {
 		LIST_INSERT_HEAD(&hw->flows, flow, next);
@@ -643,120 +701,9 @@ virtio_flow_dev_dump(struct rte_eth_dev *dev,
 	int err = 0;
 	struct virtio_hw *hw = dev->data->dev_private;
 	if (flow) {
-//		const struct rte_flow_attr *attr = &flow->rule.attr;
-		const struct rte_flow_item *patterns = flow->rule.pattern_ro;
-		const struct rte_flow_action *actions = flow->rule.actions_ro;
-
-		char *name = NULL;
-		fprintf(file, "pattern ");
-
-		for(int i=0; patterns[i].type != RTE_FLOW_ITEM_TYPE_END; i++) {
-			err = rte_flow_conv(RTE_FLOW_CONV_OP_ITEM_NAME_PTR,
-		  	      &name, sizeof(char*),
-			      (void*)(uintptr_t)patterns[i].type, error);
-			if(err < 0) {
-				fprintf(file, "Unknown pattern type: %d", patterns[i].type);
-				err = 0;
-			} else {
-				fprintf(file, "%s", name);
-			}
-
-			fprintf(file, " ");
-			switch(patterns[i].type) {
-
-			case RTE_FLOW_ITEM_TYPE_ETH:
-				if (patterns[i].spec)
-				{
-				const struct rte_flow_item_eth *fie =
-					(const struct rte_flow_item_eth *) patterns[i].spec;
-				char buf[RTE_ETHER_ADDR_FMT_SIZE];
-				rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
-						&fie->hdr.src_addr);
-				fprintf(file, "src %s ", buf);
-				rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
-						&fie->hdr.dst_addr);
-				fprintf(file, "dst %s ", buf);
-				break;
-				}
-				// fall through
-			case RTE_FLOW_ITEM_TYPE_PORT_ID:
-				if (patterns[i].spec) {
-					fprintf(file, "%d ", ((const struct rte_flow_item_port_id*)patterns[i].spec)->id);
-					break;
-				}
-				// fall through
-			default:
-				fprintf(file, "Type %d ", patterns[i].type);
-				break;
-			}
-		}
-
-		fprintf(file, " actions ");
-
-		for (int i=0; actions[i].type != RTE_FLOW_ACTION_TYPE_END; i++) {
-			err = rte_flow_conv(RTE_FLOW_CONV_OP_ACTION_NAME_PTR,
-			  	      &name, sizeof(name),
-				      (void*)(uintptr_t)(actions[i].type), error);
-			if(err < 0) {
-				fprintf(file, "Unknown action type: %d", actions[i].type);
-				err = 0;
-			} else {
-				fprintf(file, "%s", name);
-			}
-			fprintf(file, " ");
-			switch(actions[i].type) {
-			case RTE_FLOW_ACTION_TYPE_PORT_ID:
-				fprintf(file, "%d ",
-					((const struct rte_flow_action_port_id*)actions[i].conf)->id);
-				break;
-			case RTE_FLOW_ACTION_TYPE_PORT_REPRESENTOR:
-			case RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT:
-				fprintf(file, "%d ",
-					((const struct rte_flow_action_ethdev*)actions[i].conf)->port_id);
-				break;
-
-			case RTE_FLOW_ACTION_TYPE_DROP:
-				break;
-
-			case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
-				{
-				const struct rte_flow_action_set_mac *mac =
-					(const struct rte_flow_action_set_mac *) actions[i].conf;
-				char buf[RTE_ETHER_ADDR_FMT_SIZE];
-				rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
-						      (const struct rte_ether_addr *)&mac->mac_addr);
-				fprintf(file, "%s ", buf);
-				}
-				break;
-
-			case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
-				{
-				const struct rte_flow_action_set_mac *mac =
-					(const struct rte_flow_action_set_mac *) actions[i].conf;
-				char buf[RTE_ETHER_ADDR_FMT_SIZE];
-				rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
-					(const struct rte_ether_addr *)&mac->mac_addr);
-				fprintf(file, "%s ", buf);
-				}
-				break;
-
-			case RTE_FLOW_ACTION_TYPE_COUNT:
-				if (((const struct rte_flow_query_count*)actions[i].conf)->hits_set)
-				fprintf(file, "hits %lu ", 
-					((const struct rte_flow_query_count*)actions[i].conf)->hits);
-				if (((const struct rte_flow_query_count*)actions[i].conf)->bytes_set)
-				fprintf(file, "bytes %lu",
-					((const struct rte_flow_query_count*)actions[i].conf)->bytes);
-				break;
-
-			default:
-				fprintf(file, " UNKNOWN ");
-				break;
-			}
-		}
-
-		fprintf(file, "\n");
-
+		rte_flow_describe(file, flow->rule.attr,
+				flow->rule.pattern,
+				flow->rule.actions);
 	} else {
 		struct rte_flow *flow;
 		for (flow = LIST_FIRST(&hw->flows);

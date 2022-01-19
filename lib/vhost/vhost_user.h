@@ -130,7 +130,7 @@ typedef struct VhostUserInflight {
 } VhostUserInflight;
 
 struct vhost_flow_msg {
-	struct nlmsg_hdr;
+	struct nlmsghdr hdr;
 	uint8_t data[1024];
 };
 

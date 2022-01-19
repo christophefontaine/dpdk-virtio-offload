@@ -182,6 +182,7 @@ static const struct nl_pattern nl_patterns[] = {
 	[TCA_FLOWER_KEY_SCTP_DST]	= { .str="TCA_FLOWER_KEY_SCTP_DST"	, .display = print_port, },
 	[TCA_FLOWER_KEY_SCTP_DST_MASK]	= { .str="TCA_FLOWER_KEY_SCTP_DST_MASK"	, .display = print_port, },
 };
+
 static const char *nl_actions[] = {
 };
 
@@ -190,14 +191,22 @@ static int dump_nl_flow(struct nlmsg *msg)
 	return 0;
 }
 
-static int
-flow_create(int port_id, uint8_t *rule, size_t len) {
-	int err;
+void rule_offset_to_ptrs(struct rte_flow_conv_rule *rule);
 
+static int
+flow_create(int port_id, uint8_t *data, size_t len) {
+	struct rte_flow_conv_rule *rule = (struct rte_flow_conv_rule *)data;
+	rule_offset_to_ptrs(rule);
+	rte_flow_describe(stdout, 
+			rule->attr,
+			rule->pattern,
+			rule->actions);
+
+	/*
+	int err;
         struct nlmsghdr *msg = (struct nlmsghdr *)rule;
 	struct nlattr *attr;
 	int sz = mnl_attr_get_len(attr);
-
 	mnl_attr_for_each(attr, msg, 0)
 	{
 		uint16_t type = mnl_attr_get_type(attr);
@@ -237,6 +246,7 @@ flow_create(int port_id, uint8_t *rule, size_t len) {
 
 		}
 	}
+	*/
 	printf("\n");
 	return 0;
 }

@@ -1391,3 +1391,173 @@ rte_flow_flex_item_release(uint16_t port_id,
 	ret = ops->flex_item_release(dev, handle, error);
 	return flow_err(port_id, ret, error);
 }
+
+void
+rte_flow_describe(FILE *file,
+		  const struct rte_flow_attr *attr,
+		  const struct rte_flow_item patterns[],
+		  const struct rte_flow_action actions[])
+{
+	char *name = NULL;
+	fprintf(file, "pattern ");
+
+	for(int i=0; patterns[i].type != RTE_FLOW_ITEM_TYPE_END; i++) {
+		name = NULL;
+		rte_flow_conv(RTE_FLOW_CONV_OP_ITEM_NAME_PTR,
+				&name, sizeof(char*),
+				(void*)(uintptr_t)patterns[i].type, NULL);
+		if (name)  {
+			fprintf(file, "%s ", name);
+		} else {
+			fprintf(file, "Unknown pattern type: %d ", patterns[i].type);
+		}
+
+		switch(patterns[i].type) {
+		case RTE_FLOW_ITEM_TYPE_ETH:
+			if (patterns[i].spec)
+			{
+			const struct rte_flow_item_eth *fie =
+				(const struct rte_flow_item_eth *) patterns[i].spec;
+			char buf[RTE_ETHER_ADDR_FMT_SIZE];
+			rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
+					&fie->hdr.src_addr);
+			fprintf(file, "src %s ", buf);
+			rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
+					&fie->hdr.dst_addr);
+			fprintf(file, "dst %s ", buf);
+			break;
+			}
+			// fall through
+		case RTE_FLOW_ITEM_TYPE_PORT_ID:
+			if (patterns[i].spec) {
+			fprintf(file, "%d ", ((const struct rte_flow_item_port_id*)patterns[i].spec)->id);
+			break;
+			}
+			// fall through
+		case RTE_FLOW_ITEM_TYPE_VLAN:
+			if (patterns[i].spec) {
+			fprintf(file, "%d ",
+			rte_be_to_cpu_16(((const struct rte_flow_item_vlan *)patterns[i].spec)->hdr.vlan_tci));
+			break;
+			}
+			// fall through
+		case RTE_FLOW_ITEM_TYPE_IPV4:
+			if (patterns[i].spec) {
+			struct rte_ipv4_hdr *ip = &((struct rte_flow_item_ipv4 *)patterns[i].spec)->hdr;
+			struct rte_ipv4_hdr *msk = &((struct rte_flow_item_ipv4 *)patterns[i].mask)->hdr;
+			uint8_t *ip_src = &ip->src_addr;
+			uint8_t *ip_dst = &ip->dst_addr;
+			uint8_t *msk_src = &msk->src_addr;
+			uint8_t *msk_dst = &msk->dst_addr;
+			fprintf(file, "src %d.%d.%d.%d/%d.%d.%d.%d "
+ 				      "dst %d.%d.%d.%d/%d.%d.%d.%d ",
+				      ip_src[0], ip_src[1], ip_src[2], ip_src[3],
+				      msk_src[0], msk_src[1], msk_src[2], msk_src[3],
+				      ip_dst[0], ip_dst[1], ip_dst[2], ip_dst[3],
+				      msk_dst[0], msk_dst[1], msk_dst[2], msk_dst[3]);
+			break;
+			}
+			// fall through
+		case RTE_FLOW_ITEM_TYPE_UDP:
+			if (patterns[i].spec) {
+			fprintf(file, "src %d ", ((const struct rte_flow_item_udp *)patterns[i].spec)->hdr.src_port);
+			fprintf(file, "dst %d ", ((const struct rte_flow_item_udp *)patterns[i].spec)->hdr.dst_port);
+				break;
+			}
+			// fall through
+		case RTE_FLOW_ITEM_TYPE_TCP:
+			if (patterns[i].spec) {
+			fprintf(file, "src %d ", 
+			rte_be_to_cpu_16(((const struct rte_flow_item_tcp *)patterns[i].spec)->hdr.src_port));
+			fprintf(file, "dst %d ",
+			rte_be_to_cpu_16(((const struct rte_flow_item_tcp *)patterns[i].spec)->hdr.dst_port));
+				break;
+			}
+			// fall through
+		case RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR:
+		case RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT:
+			if (patterns[i].spec) {
+			fprintf(file, "%d ", ((const struct rte_flow_item_ethdev *)patterns[i].spec)->port_id);
+				break;
+			}
+			// fall through
+		default:
+			fprintf(file, "Type %d ", patterns[i].type);
+			break;
+		}
+	}
+
+	fprintf(file, " actions ");
+
+	for (int i=0; actions[i].type != RTE_FLOW_ACTION_TYPE_END; i++) {
+		name = NULL;
+		rte_flow_conv(RTE_FLOW_CONV_OP_ACTION_NAME_PTR,
+		  	      &name, sizeof(name),
+			      (void*)(uintptr_t)(actions[i].type), NULL);
+		if (name) {
+			fprintf(file, "%s ", name);
+		} else {
+			fprintf(file, "Unknown action type: %d ", actions[i].type);
+		}
+		switch(actions[i].type) {
+		case RTE_FLOW_ACTION_TYPE_PORT_ID:
+			fprintf(file, "%d ",
+				((const struct rte_flow_action_port_id*)actions[i].conf)->id);
+			break;
+
+		case RTE_FLOW_ACTION_TYPE_PORT_REPRESENTOR:
+		case RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT:
+			fprintf(file, "%d ",
+				((const struct rte_flow_action_ethdev*)actions[i].conf)->port_id);
+			break;
+
+		case RTE_FLOW_ACTION_TYPE_DROP:
+			break;
+
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_SRC:
+		case RTE_FLOW_ACTION_TYPE_SET_MAC_DST:
+			{
+			const struct rte_flow_action_set_mac *mac =
+				(const struct rte_flow_action_set_mac *) actions[i].conf;
+			char buf[RTE_ETHER_ADDR_FMT_SIZE];
+			rte_ether_format_addr(buf, RTE_ETHER_ADDR_FMT_SIZE,
+				(const struct rte_ether_addr *)&mac->mac_addr);
+			fprintf(file, "%s ", buf);
+			}
+			break;
+		case RTE_FLOW_ACTION_TYPE_SET_IPV4_DST:
+		case RTE_FLOW_ACTION_TYPE_SET_IPV4_SRC:
+			{
+			uint8_t * ip = (uint8_t*)&(((struct rte_flow_action_set_ipv4 *)(actions[i].conf))->ipv4_addr);
+			fprintf(file, "%d.%d.%d.%d ", ip[0], ip[1], ip[2], ip[3]);
+			}
+			break;
+
+		case RTE_FLOW_ACTION_TYPE_SET_IPV6_DST:
+		case RTE_FLOW_ACTION_TYPE_SET_IPV6_SRC:
+			fprintf(file, "%08x ",
+					((const struct rte_flow_action_set_ipv6 *)actions[i].conf)->ipv6_addr);
+			break;
+
+		case RTE_FLOW_ACTION_TYPE_SET_TP_SRC:
+		case RTE_FLOW_ACTION_TYPE_SET_TP_DST:
+			fprintf(file, "%d ",
+				rte_be_to_cpu_16(((const struct rte_flow_action_set_tp *)actions[i].conf)->port));
+			break;
+
+
+		case RTE_FLOW_ACTION_TYPE_COUNT:
+			if (((const struct rte_flow_query_count*)actions[i].conf)->hits_set)
+			fprintf(file, "hits %lu ", 
+				((const struct rte_flow_query_count*)actions[i].conf)->hits);
+			if (((const struct rte_flow_query_count*)actions[i].conf)->bytes_set)
+			fprintf(file, "bytes %lu",
+				((const struct rte_flow_query_count*)actions[i].conf)->bytes);
+			break;
+
+		default:
+			break;
+		}
+	}
+	fprintf(file, "\n");
+}

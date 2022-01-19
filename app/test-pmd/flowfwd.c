@@ -40,8 +40,9 @@
 #include "testpmd.h"
 
 #include "lib/vhost/rte_vhost.h"
+
+#undef MAX_PKT_BURST
 #include "lib/vhost/vhost.h"
-#include "lib/vhost/vhost_user.h"
 
 
 struct per_port_burst {
@@ -62,7 +63,6 @@ pkt_burst_flow_forward(struct fwd_stream *fs)
 	struct per_port_burst tx_bursts[RTE_MAX_ETHPORTS];
 	uint16_t nb_rx;
 	uint16_t nb_tx;
-	uint32_t retry;
 	uint64_t start_tsc = 0;
 
 	get_start_cycles(&start_tsc);
@@ -106,148 +106,16 @@ pkt_burst_flow_forward(struct fwd_stream *fs)
 	get_end_cycles(fs, start_tsc);
 }
 
-#define NLMSG_BUF 1024
-struct nlmsg {
-       struct nlmsghdr nh;
-       char buf[NLMSG_BUF];
-};
-
-struct nl_pattern {
-	char str[64];
-	int (*display)(uint8_t *buf);
-};
-
-static int
-print_eth(uint8_t *buf)
-{
-	char str[32] = "";
-	rte_ether_format_addr(str, 32, (struct rte_ether_addr*)buf);
-	printf("%s", str);
-	return 0;
-}
-
-static int
-print_ipv4(uint8_t *buf)
-{
-	printf("%d.%d.%d.%d", buf[0], buf[1], buf[2], buf[3]);
-	return 0;
-}
-
-static int
-print_ipv6(uint8_t *buf)
-{
-	printf("0x%08x", buf);
-	return 0;
-}
-
-static int
-print_port(uint8_t *buf)
-{
-	printf("%d", *(uint16_t*)buf);
-	return 0;
-}
-
-static int
-print_vlan(uint8_t *buf)
-{
-	printf("%d", *(uint16_t*)buf);
-	return 0;
-}
-
-
-static const struct nl_pattern nl_patterns[] = {
-	[TCA_FLOWER_KEY_ETH_DST]	= { .str="TCA_FLOWER_KEY_ETH_DST"	, .display = print_eth, },
-	[TCA_FLOWER_KEY_ETH_DST_MASK]	= { .str="TCA_FLOWER_KEY_ETH_DST_MASK"	, .display = print_eth, },
-	[TCA_FLOWER_KEY_ETH_SRC]	= { .str="TCA_FLOWER_KEY_ETH_SRC"	, .display = print_eth, },
-	[TCA_FLOWER_KEY_ETH_SRC_MASK]	= { .str="TCA_FLOWER_KEY_ETH_SRC_MASK"	, .display = print_eth, },
-	[TCA_FLOWER_KEY_VLAN_ID]	= { .str="TCA_FLOWER_KEY_VLAN_ID"	, .display = print_vlan, },
-	[TCA_FLOWER_KEY_IPV4_SRC]	= { .str="TCA_FLOWER_KEY_IPV4_SRC"	, .display = print_ipv4, },
-	[TCA_FLOWER_KEY_IPV4_SRC_MASK]	= { .str="TCA_FLOWER_KEY_IPV4_SRC_MASK"	, .display = print_ipv4, },
-	[TCA_FLOWER_KEY_IPV4_DST]	= { .str="TCA_FLOWER_KEY_IPV4_DST"	, .display = print_ipv4, },
-	[TCA_FLOWER_KEY_IPV4_DST_MASK]	= { .str="TCA_FLOWER_KEY_IPV4_DST_MASK"	, .display = print_ipv4, },
-	[TCA_FLOWER_KEY_IPV6_SRC]	= { .str="TCA_FLOWER_KEY_IPV6_SRC"	, .display = print_ipv6, },
-	[TCA_FLOWER_KEY_IPV6_SRC_MASK]	= { .str="TCA_FLOWER_KEY_IPV6_SRC_MASK"	, .display = print_ipv6, },
-	[TCA_FLOWER_KEY_IPV6_DST]	= { .str="TCA_FLOWER_KEY_IPV6_DST"	, .display = print_ipv6, },
-	[TCA_FLOWER_KEY_IPV6_DST_MASK]	= { .str="TCA_FLOWER_KEY_IPV6_DST_MASK"	, .display = print_ipv6, },
-	[TCA_FLOWER_KEY_TCP_SRC]	= { .str="TCA_FLOWER_KEY_TCP_SRC"	, .display = print_port, },	
-	[TCA_FLOWER_KEY_TCP_SRC_MASK]	= { .str="TCA_FLOWER_KEY_TCP_SRC_MASK"	, .display = print_port, },
-	[TCA_FLOWER_KEY_TCP_DST]	= { .str="TCA_FLOWER_KEY_TCP_DST"	, .display = print_port, },	
-	[TCA_FLOWER_KEY_TCP_DST_MASK]	= { .str="TCA_FLOWER_KEY_TCP_DST_MASK"	, .display = print_port, },
-	[TCA_FLOWER_KEY_UDP_SRC]	= { .str="TCA_FLOWER_KEY_UDP_SRC"	, .display = print_port, },	
-	[TCA_FLOWER_KEY_UDP_SRC_MASK]	= { .str="TCA_FLOWER_KEY_UDP_SRC_MASK"	, .display = print_port, },
-	[TCA_FLOWER_KEY_UDP_DST]	= { .str="TCA_FLOWER_KEY_UDP_DST"	, .display = print_port, },
-	[TCA_FLOWER_KEY_UDP_DST_MASK]	= { .str="TCA_FLOWER_KEY_UDP_DST_MASK"	, .display = print_port, },
-	[TCA_FLOWER_KEY_SCTP_SRC]	= { .str="TCA_FLOWER_KEY_SCTP_SRC"	, .display = print_port, },
-	[TCA_FLOWER_KEY_SCTP_SRC_MASK]	= { .str="TCA_FLOWER_KEY_SCTP_SRC_MASK"	, .display = print_port, },
-	[TCA_FLOWER_KEY_SCTP_DST]	= { .str="TCA_FLOWER_KEY_SCTP_DST"	, .display = print_port, },
-	[TCA_FLOWER_KEY_SCTP_DST_MASK]	= { .str="TCA_FLOWER_KEY_SCTP_DST_MASK"	, .display = print_port, },
-};
-
-static const char *nl_actions[] = {
-};
-
-static int dump_nl_flow(struct nlmsg *msg)
-{
-	return 0;
-}
-
 void rule_offset_to_ptrs(struct rte_flow_conv_rule *rule);
 
 static int
-flow_create(int port_id, uint8_t *data, size_t len) {
+flow_create(int port_id __rte_unused, uint8_t *data, size_t len __rte_unused) {
 	struct rte_flow_conv_rule *rule = (struct rte_flow_conv_rule *)data;
 	rule_offset_to_ptrs(rule);
 	rte_flow_describe(stdout, 
 			rule->attr,
 			rule->pattern,
 			rule->actions);
-
-	/*
-	int err;
-        struct nlmsghdr *msg = (struct nlmsghdr *)rule;
-	struct nlattr *attr;
-	int sz = mnl_attr_get_len(attr);
-	mnl_attr_for_each(attr, msg, 0)
-	{
-		uint16_t type = mnl_attr_get_type(attr);
-		void *payload = mnl_attr_get_payload(attr);
-		switch(type) {
-			case TCA_FLOW_KEYS:
-			{
-				printf("Pattern:\n");
-				struct nlattr * nestedattr;
-				mnl_attr_for_each_nested(nestedattr, attr) {
-				type = mnl_attr_get_type(nestedattr);
-				uint16_t payload_len = mnl_attr_get_payload_len(nestedattr);
-				uint8_t * payload = mnl_attr_get_payload(nestedattr);
-				if (nl_patterns[type].display) {
-					printf("%s ", nl_patterns[type].str);
-					nl_patterns[type].display(payload);
-					printf(" | ");
-				} else {
-					printf("type: %d len %d | ", type, payload_len);
-				}
-				}
-			}
-			break;
-			case TCA_FLOW_ACT:
-			{
-				printf("\nActions:\n");
-				struct nlattr * nestedattr;
-				mnl_attr_for_each_nested(nestedattr, attr) {
-				uint16_t payload_len = mnl_attr_get_payload_len(nestedattr);
-				printf("type: %d len %d | ", type, payload_len);
-				}
-			}
-			break;
-			default:
-				printf("Unknown upper type: %d | ", type);
-				break;
-
-		}
-	}
-	*/
-	printf("\n");
 	return 0;
 }
 
@@ -267,6 +135,8 @@ flow_query(int port_id, uint64_t flow_id, uint64_t *pkt, uint64_t *bytes) {
 	return 0;
 }
 
+int rte_eth_vhost_get_vid_from_port_id(portid_t pi);
+
 static int
 flow_setup(portid_t pi)
 {
@@ -275,7 +145,11 @@ flow_setup(portid_t pi)
 	
 	if (vid >= 0) {
 		rte_vhost_get_ifname(vid, path, 256);
+		/* A bit hacky */
+#pragma GCC diagnostic push  // require GCC 4.6
+#pragma GCC diagnostic ignored "-Wdiscarded-qualifiers"
 		struct rte_vhost_device_ops * ops = vhost_driver_callback_get(path);
+#pragma GCC diagnostic pop   // require GCC 4.6
 		ops->flow_create = flow_create;
 		ops->flow_destroy = flow_destroy;
 		ops->flow_query = flow_query;

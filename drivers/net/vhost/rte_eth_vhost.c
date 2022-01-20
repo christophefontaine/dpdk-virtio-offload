@@ -975,10 +975,32 @@ vring_state_changed(int vid, uint16_t vring, int enable)
 	return 0;
 }
 
+
+static int
+dummy_flow_create(int port_id __rte_unused, uint8_t *data __rte_unused, size_t len __rte_unused)
+{
+	return 0;
+}
+static int
+dummy_flow_destroy(int port_id __rte_unused, uint64_t flow_id __rte_unused)
+{
+	return 0;
+}
+
+static int
+dummy_flow_query(int port_id __rte_unused, uint64_t flow_id __rte_unused,
+		 uint64_t *pkt __rte_unused, uint64_t *bytes __rte_unused)
+{
+	return 0;
+}
+
 static struct rte_vhost_device_ops vhost_ops = {
 	.new_device          = new_device,
 	.destroy_device      = destroy_device,
 	.vring_state_changed = vring_state_changed,
+	.flow_create         = dummy_flow_create,
+	.flow_destroy        = dummy_flow_destroy,
+	.flow_query          = dummy_flow_query,
 };
 
 static int

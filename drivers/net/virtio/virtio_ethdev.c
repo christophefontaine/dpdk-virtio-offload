@@ -357,6 +357,7 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 		result = virtio_send_command_split(cvq, ctrl, dlen, pkt_num);
 
 	rte_spinlock_unlock(&cvq->lock);
+	memcpy(ctrl, result, sizeof(struct virtio_pmd_ctrl));
 	return result->status;
 }
 

@@ -111,7 +111,6 @@ virtio_flow_create(struct rte_eth_dev *dev,
 		   struct rte_flow_error *error)
 {
 	struct virtio_hw *hw = dev->data->dev_private;
- 	struct virtio_user_dev *vudev = virtio_user_get_dev(hw);
 	struct rte_flow *flow = NULL;
 	int ret, flow_len;
 	if (attr->egress) {
@@ -147,10 +146,16 @@ virtio_flow_create(struct rte_eth_dev *dev,
 	}
 
 	rule_ptrs_to_offset(&flow->rule);
-	ret = vudev->ops->flow_create(vudev, (uint8_t*)&flow->rule, flow_len);
+
+	struct virtio_pmd_ctrl ctrl;
+	ctrl.hdr.class = VIRTIO_NET_CTRL_FLOW;
+	ctrl.hdr.cmd = VIRTIO_NET_CTRL_FLOW_CREATE;
+	memcpy(ctrl.data, &flow->rule, flow_len);
+	
+	ret = virtio_send_command(hw->cvq, &ctrl, &flow_len, 1);
 	rule_offset_to_ptrs(&flow->rule);
 
-	if (ret > 0) {
+	if (ret == 0) {
 		LIST_INSERT_HEAD(&hw->flows, flow, next);
 		return flow;
 	} else {
@@ -173,13 +178,20 @@ static int
 virtio_flow_destroy(struct rte_eth_dev *dev,
 		       struct rte_flow *flow,
 		       struct rte_flow_error *error __rte_unused)
-{	
+{
+	int ret;	
 	struct virtio_hw *hw = dev->data->dev_private;
- 	struct virtio_user_dev *vudev = virtio_user_get_dev(hw);
-        vudev->ops->flow_destroy(vudev, (uintptr_t)flow);
+
+	struct virtio_pmd_ctrl ctrl;
+	int len = sizeof(uint64_t);
+	ctrl.hdr.class = VIRTIO_NET_CTRL_FLOW;
+	ctrl.hdr.cmd = VIRTIO_NET_CTRL_FLOW_DESTROY;
+	memcpy(ctrl.data, &flow, len);
+	
+	ret = virtio_send_command(hw->cvq, &ctrl, &len, 1);
 	LIST_REMOVE(flow, next);
 	rte_free(flow);
-	return 0;
+	return ret;
 }
 
 /**
@@ -214,18 +226,27 @@ virtio_flow_query(struct rte_eth_dev *dev,
 		void *data,
 		struct rte_flow_error *error)
 {
+	int ret;
 	struct virtio_hw *hw = dev->data->dev_private;
- 	struct virtio_user_dev *vudev = virtio_user_get_dev(hw);
-	uint64_t packets=0, bytes=0;
 	struct rte_flow_query_count *count = (struct rte_flow_query_count *)data;
-	int ret = vudev->ops->flow_query(vudev, (uintptr_t)flow, &packets, &bytes);
-	if (ret<0) {
+	int len = sizeof(struct vhost_flow_stats);
+	struct virtio_pmd_ctrl ctrl = {
+		.hdr = {
+			.class = VIRTIO_NET_CTRL_FLOW,
+	 		.cmd = VIRTIO_NET_CTRL_FLOW_QUERY,
+		},
+	};
+	((struct vhost_flow_stats *)ctrl.data)->flow_id = (uintptr_t)flow;
+
+	ret = virtio_send_command(hw->cvq, &ctrl, &len, 1);
+	
+	if (ret) {
 		rte_flow_error_set(error, ENOTSUP, RTE_FLOW_ERROR_TYPE_UNSPECIFIED,
 				NULL, "Vhost Flow Query failed");
 		return ret;
 	} else {
-		count->hits = packets;
-		count->bytes = bytes;
+		count->hits = ((struct vhost_flow_stats *)ctrl.data)->hits;
+		count->bytes = ((struct vhost_flow_stats *)ctrl.data)->bytes;
 	        return 0;
 	}
 }

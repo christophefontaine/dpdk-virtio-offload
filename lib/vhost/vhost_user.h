@@ -129,9 +129,16 @@ typedef struct VhostUserInflight {
 	uint16_t queue_size;
 } VhostUserInflight;
 
-struct vhost_flow_msg {
+struct virtio_net_flow_desc {
+	uint64_t flow_id;
 	struct nlmsghdr hdr;
 	uint8_t data[1024];
+};
+
+struct virtio_net_flow_stats {
+	uint64_t flow_id;
+	uint64_t hits;
+	uint64_t bytes;
 };
 
 typedef struct VhostUserMsg {
@@ -157,7 +164,8 @@ typedef struct VhostUserMsg {
 		VhostUserCryptoSessionParam crypto_session;
 		VhostUserVringArea area;
 		VhostUserInflight inflight;
-		struct vhost_flow_msg flow_spec;
+		struct virtio_net_flow_desc flow_desc;
+		struct virtio_net_flow_stats flow_stats;
 	} payload;
 } __rte_packed VhostUserMsg;
 

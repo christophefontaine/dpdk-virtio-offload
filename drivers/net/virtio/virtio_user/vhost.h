@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <linux/types.h>
 #include <linux/ioctl.h>
+#include <linux/netlink.h>
 
 #include <rte_errno.h>
 
@@ -59,6 +60,18 @@ struct vhost_memory_region {
 	uint64_t memory_size; /* bytes */
 	uint64_t userspace_addr;
 	uint64_t mmap_offset;
+};
+
+struct vhost_flow_desc {
+	uint64_t flow_id;
+	struct nlmsghdr hdr;
+	uint8_t data[1024];
+};
+
+struct vhost_flow_stats {
+	uint64_t flow_id;
+	uint64_t hits;
+	uint64_t bytes;
 };
 
 struct virtio_user_dev;

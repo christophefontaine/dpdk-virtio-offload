@@ -89,11 +89,6 @@ enum vhost_user_request {
 	VHOST_USER_MAX
 };
 
-struct vhost_flow_msg {
-	struct nlmsg_hdr;
-	uint8_t data[1024];
-};
-
 struct vhost_user_msg {
 	enum vhost_user_request request;
 
@@ -109,7 +104,8 @@ struct vhost_user_msg {
 		struct vhost_vring_state state;
 		struct vhost_vring_addr addr;
 		struct vhost_memory memory;
-		struct vhost_flow_msg flow_spec;
+		struct vhost_flow_desc flow_spec;
+		struct vhost_flow_stats flow_stats;
 	} payload;
 } __rte_packed;
 
@@ -1013,7 +1009,7 @@ vhost_user_flow_create(struct virtio_user_dev *dev,
 		.size = len,
 	};
 	memcpy(&msg.payload.u64, flow_spec, len);
-	return vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
+	return !vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
 }
 
 static int
@@ -1026,7 +1022,7 @@ vhost_user_flow_destroy(struct virtio_user_dev *dev, uint64_t flow_id)
 		.size = sizeof(msg.payload.u64),
 	};
 	msg.payload.u64 = flow_id;
-	return vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
+	return !vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
 }
 
 static int
@@ -1037,10 +1033,10 @@ vhost_user_flow_query(struct virtio_user_dev *dev,
 	struct vhost_user_msg msg = {
 		.request = VHOST_USER_FLOW_QUERY,
 		.flags = VHOST_USER_VERSION | VHOST_USER_NEED_REPLY,
-		.size = sizeof(msg.payload.u64),
+		.size = sizeof(msg.payload.flow_stats),
 	};
 	
-	msg.payload.u64 = flow_id;
+	msg.payload.flow_stats.flow_id = flow_id;
 	int ret = vhost_user_write(vudata->vhostfd, &msg, NULL, 0);
 	if (ret < 0) {
 		PMD_DRV_LOG(ERR, "Failed to send request");
@@ -1051,8 +1047,9 @@ vhost_user_flow_query(struct virtio_user_dev *dev,
 		PMD_DRV_LOG(ERR, "Failed to read reply");
 		goto err;
 	}
-	*packets = ((struct rte_flow_query_count*)msg.payload.u64)->hits;
-	*bytes = ((struct rte_flow_query_count*)msg.payload.u64)->bytes;
+	*packets = msg.payload.flow_stats.hits;
+	*bytes = msg.payload.flow_stats.bytes;
+	return 0;
 err:
 	PMD_DRV_LOG(ERR, "Failed to query flow stats");
 	return ret;

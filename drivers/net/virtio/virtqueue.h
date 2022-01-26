@@ -321,6 +321,20 @@ struct virtqueue {
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MIN        1
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX        0x8000
 
+
+/* VIRTIO_NET_CTRL_GUEST_OFFLOADS reserves index 5 */
+
+/*
+ * Flow offload create/delete/query actions
+ *
+ * Available with the VIRTIO_NET_F_FLOW_OFFLOAD feature bit.
+ */
+#define VIRTIO_NET_CTRL_FLOW		6
+#define VIRTIO_NET_CTRL_FLOW_CREATE 	1
+#define VIRTIO_NET_CTRL_FLOW_DESTROY 	2
+#define VIRTIO_NET_CTRL_FLOW_QUERY	3
+
+
 /**
  * This is the first element of the scatter-gather list.  If you don't
  * specify GSO or CSUM features, you can simply ignore the header.

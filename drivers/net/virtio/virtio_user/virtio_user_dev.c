@@ -710,6 +710,30 @@ virtio_user_handle_mq(struct virtio_user_dev *dev, uint16_t q_pairs)
 	return ret;
 }
 
+static int
+virtio_user_handle_flow_crud(struct virtio_user_dev *dev, int cmd, void *data, size_t data_len)
+{
+	int ret = -ENOTSUP;
+	switch(cmd)
+	{
+	case VIRTIO_NET_CTRL_FLOW_CREATE:
+		ret = dev->ops->flow_create(dev, data, data_len);
+	break;
+	case VIRTIO_NET_CTRL_FLOW_DESTROY:
+		ret = dev->ops->flow_destroy(dev, *(uint64_t*)data);
+	break;
+	case VIRTIO_NET_CTRL_FLOW_QUERY:
+		if(data_len == sizeof(struct vhost_flow_stats)) {
+		struct vhost_flow_stats *stats = (struct vhost_flow_stats *)data;
+		ret = dev->ops->flow_query(dev, stats->flow_id, &stats->hits, &stats->bytes);
+		}
+	break;
+	default:
+	break;
+	}
+	return ret;
+}
+
 static uint32_t
 virtio_user_handle_ctrl_msg(struct virtio_user_dev *dev, struct vring *vring,
 			    uint16_t idx_hdr)
@@ -740,6 +764,10 @@ virtio_user_handle_ctrl_msg(struct virtio_user_dev *dev, struct vring *vring,
 
 		queues = *(uint16_t *)(uintptr_t)vring->desc[idx_data].addr;
 		status = virtio_user_handle_mq(dev, queues);
+	} else if (hdr->class == VIRTIO_NET_CTRL_FLOW) {
+		status = virtio_user_handle_flow_crud(dev, hdr->cmd,
+				(void*)(uintptr_t)vring->desc[idx_data].addr,
+				vring->desc[idx_data].len);
 	} else if (hdr->class == VIRTIO_NET_CTRL_RX  ||
 		   hdr->class == VIRTIO_NET_CTRL_MAC ||
 		   hdr->class == VIRTIO_NET_CTRL_VLAN) {
@@ -794,7 +822,11 @@ virtio_user_handle_ctrl_msg_packed(struct virtio_user_dev *dev,
 
 		queues = *(uint16_t *)(uintptr_t)
 				vring->desc[idx_data].addr;
-		status = virtio_user_handle_mq(dev, queues);
+  		status = virtio_user_handle_mq(dev, queues);
+	} else if (hdr->class == VIRTIO_NET_CTRL_FLOW) {
+		status = virtio_user_handle_flow_crud(dev, hdr->cmd,
+				(void*)(uintptr_t)vring->desc[idx_data].addr,
+				vring->desc[idx_data].len);
 	} else if (hdr->class == VIRTIO_NET_CTRL_RX  ||
 		   hdr->class == VIRTIO_NET_CTRL_MAC ||
 		   hdr->class == VIRTIO_NET_CTRL_VLAN) {

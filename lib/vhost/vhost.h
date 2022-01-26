@@ -327,7 +327,7 @@ struct vring_packed_desc_event {
  * POC to support Flow offload from an app to a vswitch
  */
 #ifndef VIRTIO_NET_F_FLOW_OFFLOAD
-#define VIRTIO_NET_F_FLOW_OFFLOAD 61
+#define VIRTIO_NET_F_FLOW_OFFLOAD 56
 #endif
 
 /* Features supported by this builtin vhost-user net driver. */

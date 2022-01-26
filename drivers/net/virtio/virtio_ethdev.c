@@ -1071,6 +1071,7 @@ const struct eth_dev_ops virtio_user_secondary_eth_dev_ops = {
 	.xstats_get_names        = virtio_dev_xstats_get_names,
 	.stats_reset             = virtio_dev_stats_reset,
 	.xstats_reset            = virtio_dev_stats_reset,
+	.flow_ops_get            = virtio_dev_flow_ops_get,
 	/* collect stats per queue */
 	.queue_stats_mapping_set = virtio_dev_queue_stats_mapping_set,
 };

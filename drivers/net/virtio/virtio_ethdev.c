@@ -2577,7 +2577,6 @@ virtio_dev_configure(struct rte_eth_dev *dev)
 
 	PMD_INIT_LOG(DEBUG, "configure");
 	req_features = VIRTIO_PMD_DEFAULT_GUEST_FEATURES;
-	req_features |= (1ULL << VIRTIO_NET_F_FLOW_OFFLOAD );
 
 	if (rxmode->mq_mode != RTE_ETH_MQ_RX_NONE && rxmode->mq_mode != RTE_ETH_MQ_RX_RSS) {
 		PMD_DRV_LOG(ERR,

@@ -321,7 +321,7 @@ virtio_send_command_split(struct virtnet_ctl *cvq,
 	return result;
 }
 
-static int
+int
 virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 		    int *dlen, int pkt_num)
 {

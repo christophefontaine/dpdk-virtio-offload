@@ -27,6 +27,10 @@ struct rte_flow {
 	struct rte_flow_conv_rule rule;
 };
 
+int
+virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
+		    int *dlen, int pkt_num);
+
 #define virtio_user_get_dev(hwp) container_of(hwp, struct virtio_user_dev, hw)
 void rule_ptrs_to_offset(struct rte_flow_conv_rule *rule);
 void rule_offset_to_ptrs(struct rte_flow_conv_rule *rule);

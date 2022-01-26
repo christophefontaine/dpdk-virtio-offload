@@ -127,4 +127,8 @@ bool virtio_rx_check_scatter(uint16_t max_rx_pkt_len, uint16_t rx_buf_size,
 
 uint16_t virtio_rx_mem_pool_buf_size(struct rte_mempool *mp);
 
+struct virtio_pmd_ctrl;
+int
+virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
+		                    int *dlen, int pkt_num);
 #endif /* _VIRTIO_ETHDEV_H_ */

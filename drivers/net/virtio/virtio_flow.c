@@ -150,7 +150,9 @@ virtio_flow_create(struct rte_eth_dev *dev,
 	struct virtio_pmd_ctrl ctrl;
 	ctrl.hdr.class = VIRTIO_NET_CTRL_FLOW;
 	ctrl.hdr.cmd = VIRTIO_NET_CTRL_FLOW_CREATE;
-	memcpy(ctrl.data, &flow->rule, flow_len);
+	struct virtio_net_flow_desc * flow_desc = (struct virtio_net_flow_desc *)ctrl.data;
+	flow_desc->flow_id = (uint64_t)(uintptr_t)flow;
+	memcpy(&flow_desc->hdr, &flow->rule, flow_len);
 	
 	ret = virtio_send_command(hw->cvq, &ctrl, &flow_len, 1);
 	rule_offset_to_ptrs(&flow->rule);
@@ -229,14 +231,14 @@ virtio_flow_query(struct rte_eth_dev *dev,
 	int ret;
 	struct virtio_hw *hw = dev->data->dev_private;
 	struct rte_flow_query_count *count = (struct rte_flow_query_count *)data;
-	int len = sizeof(struct vhost_flow_stats);
+	int len = sizeof(struct virtio_net_flow_stats);
 	struct virtio_pmd_ctrl ctrl = {
 		.hdr = {
 			.class = VIRTIO_NET_CTRL_FLOW,
 	 		.cmd = VIRTIO_NET_CTRL_FLOW_QUERY,
 		},
 	};
-	((struct vhost_flow_stats *)ctrl.data)->flow_id = (uintptr_t)flow;
+	((struct virtio_net_flow_stats *)ctrl.data)->flow_id = (uintptr_t)flow;
 
 	ret = virtio_send_command(hw->cvq, &ctrl, &len, 1);
 	
@@ -245,8 +247,8 @@ virtio_flow_query(struct rte_eth_dev *dev,
 				NULL, "Vhost Flow Query failed");
 		return ret;
 	} else {
-		count->hits = ((struct vhost_flow_stats *)ctrl.data)->hits;
-		count->bytes = ((struct vhost_flow_stats *)ctrl.data)->bytes;
+		count->hits = ((struct virtio_net_flow_stats *)ctrl.data)->hits;
+		count->bytes = ((struct virtio_net_flow_stats *)ctrl.data)->bytes;
 	        return 0;
 	}
 }

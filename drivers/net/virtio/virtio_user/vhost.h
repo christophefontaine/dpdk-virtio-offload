@@ -62,13 +62,13 @@ struct vhost_memory_region {
 	uint64_t mmap_offset;
 };
 
-struct vhost_flow_desc {
+struct virtio_net_flow_desc {
 	uint64_t flow_id;
 	struct nlmsghdr hdr;
 	uint8_t data[1024];
 };
 
-struct vhost_flow_stats {
+struct virtio_net_flow_stats {
 	uint64_t flow_id;
 	uint64_t hits;
 	uint64_t bytes;

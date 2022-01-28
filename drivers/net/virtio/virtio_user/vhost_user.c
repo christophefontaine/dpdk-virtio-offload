@@ -104,8 +104,8 @@ struct vhost_user_msg {
 		struct vhost_vring_state state;
 		struct vhost_vring_addr addr;
 		struct vhost_memory memory;
-		struct vhost_flow_desc flow_spec;
-		struct vhost_flow_stats flow_stats;
+		struct virtio_net_flow_desc flow_spec;
+		struct virtio_net_flow_stats flow_stats;
 	} payload;
 } __rte_packed;
 

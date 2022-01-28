@@ -723,8 +723,8 @@ virtio_user_handle_flow_crud(struct virtio_user_dev *dev, int cmd, void *data, s
 		ret = dev->ops->flow_destroy(dev, *(uint64_t*)data);
 	break;
 	case VIRTIO_NET_CTRL_FLOW_QUERY:
-		if(data_len == sizeof(struct vhost_flow_stats)) {
-		struct vhost_flow_stats *stats = (struct vhost_flow_stats *)data;
+		if(data_len == sizeof(struct virtio_net_flow_stats)) {
+		struct virtio_net_flow_stats *stats = (struct virtio_net_flow_stats *)data;
 		ret = dev->ops->flow_query(dev, stats->flow_id, &stats->hits, &stats->bytes);
 		}
 	break;

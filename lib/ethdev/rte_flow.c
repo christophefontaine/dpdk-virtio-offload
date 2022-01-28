@@ -1399,6 +1399,12 @@ rte_flow_describe(FILE *file,
 		  const struct rte_flow_action actions[])
 {
 	char *name = NULL;
+	fprintf(file, "attributes group: %d priority %d %s %s %s ",
+			attr->group, attr->priority,
+			attr->ingress?"ingress ":"",
+			attr->egress?"egress ":"",
+			attr->transfer?"transfer ":""
+			);
 	fprintf(file, "pattern ");
 
 	for(int i=0; patterns[i].type != RTE_FLOW_ITEM_TYPE_END; i++) {

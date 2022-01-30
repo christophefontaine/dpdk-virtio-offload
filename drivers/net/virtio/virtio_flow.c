@@ -145,17 +145,18 @@ virtio_flow_create(struct rte_eth_dev *dev,
 		goto fail;
 	}
 
-	rule_ptrs_to_offset(&flow->rule);
 
 	struct virtio_pmd_ctrl ctrl;
 	ctrl.hdr.class = VIRTIO_NET_CTRL_FLOW;
 	ctrl.hdr.cmd = VIRTIO_NET_CTRL_FLOW_CREATE;
+	int data_sz =  offsetof(struct virtio_net_flow_desc, hdr) + flow_len;
 	struct virtio_net_flow_desc * flow_desc = (struct virtio_net_flow_desc *)ctrl.data;
 	flow_desc->flow_id = (uint64_t)(uintptr_t)flow;
+	rule_ptrs_to_offset(&flow->rule);
 	memcpy(&flow_desc->hdr, &flow->rule, flow_len);
-	
-	ret = virtio_send_command(hw->cvq, &ctrl, &flow_len, 1);
 	rule_offset_to_ptrs(&flow->rule);
+
+	ret = virtio_send_command(hw->cvq, &ctrl, &data_sz, 1);
 
 	if (ret == 0) {
 		LIST_INSERT_HEAD(&hw->flows, flow, next);

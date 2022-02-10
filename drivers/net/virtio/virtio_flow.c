@@ -32,8 +32,8 @@ virtio_send_command(struct virtnet_ctl *cvq, struct virtio_pmd_ctrl *ctrl,
 		    int *dlen, int pkt_num);
 
 #define virtio_user_get_dev(hwp) container_of(hwp, struct virtio_user_dev, hw)
-void rule_ptrs_to_offset(struct rte_flow_conv_rule *rule);
-void rule_offset_to_ptrs(struct rte_flow_conv_rule *rule);
+static void rule_ptrs_to_offset(struct rte_flow_conv_rule *rule);
+static void rule_offset_to_ptrs(struct rte_flow_conv_rule *rule);
 
 /**
  * Validate flow rule.
@@ -54,7 +54,8 @@ virtio_flow_validate(struct rte_eth_dev *dev __rte_unused,
 	return -1;
 }
 
-void rule_ptrs_to_offset(struct rte_flow_conv_rule *rule)
+static void
+rule_ptrs_to_offset(struct rte_flow_conv_rule *rule)
 {
 	uintptr_t base = (uintptr_t) rule;
 	struct rte_flow_item *items = rule->pattern; 
@@ -79,7 +80,8 @@ void rule_ptrs_to_offset(struct rte_flow_conv_rule *rule)
 	rule->actions = (struct rte_flow_action *) ((uintptr_t)rule->actions - base);
 }
 
-void rule_offset_to_ptrs(struct rte_flow_conv_rule *rule)
+static void
+rule_offset_to_ptrs(struct rte_flow_conv_rule *rule)
 {
 	uintptr_t base = (uintptr_t) rule;
 	rule->attr = (struct rte_flow_attr *) (base + (uintptr_t)rule->attr);
@@ -156,7 +158,14 @@ virtio_flow_create(struct rte_eth_dev *dev,
 	memcpy(&flow_desc->hdr, &flow->rule, flow_len);
 	rule_offset_to_ptrs(&flow->rule);
 
+	uint64_t start_tsc = rte_rdtsc();
 	ret = virtio_send_command(hw->cvq, &ctrl, &data_sz, 1);
+	uint64_t end_tsc = rte_rdtsc();
+	uint64_t diff = end_tsc-start_tsc;
+#define CYC_PER_MHZ 1E6
+	uint64_t cpuMHz = (uint64_t)(rte_get_tsc_hz() / CYC_PER_MHZ);
+	PMD_INIT_LOG(DEBUG, "virtio_send_command time: %lu at %"PRIu64" MHz aka %ld us aka ~ %ld creations/s", diff,
+			cpuMHz, diff/cpuMHz, (uint32_t) CYC_PER_MHZ/(diff/cpuMHz) );
 
 	if (ret == 0) {
 		LIST_INSERT_HEAD(&hw->flows, flow, next);

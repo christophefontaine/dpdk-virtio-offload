@@ -2761,6 +2761,30 @@ vhost_user_set_status(struct virtio_net **pdev,
 	return RTE_VHOST_MSG_RESULT_OK;
 }
 
+static void rule_offset_to_ptrs(struct rte_flow_conv_rule *rule)
+{
+	uintptr_t base = (uintptr_t) rule;
+	rule->attr = (struct rte_flow_attr *) (base + (uintptr_t)rule->attr);
+	rule->pattern = (struct rte_flow_item *) (base + (uintptr_t)rule->pattern);
+	rule->actions = (struct rte_flow_action *) (base + (uintptr_t)rule->actions);
+
+	struct rte_flow_item *items = rule->pattern;
+	struct rte_flow_action *actions = rule->actions;
+
+	for (; items->type != RTE_FLOW_ITEM_TYPE_END; ++items) {
+		if (items->spec)
+			items->spec = (void*)((uintptr_t)items->spec + base);
+		if (items->last)
+			items->last = (void*)((uintptr_t)items->last + base);
+		if (items->mask)
+			items->mask = (void*)((uintptr_t)items->mask + base);
+	}
+	for (; actions->type != RTE_FLOW_ACTION_TYPE_END; ++actions) {
+		if (actions->conf)
+			actions->conf = (void*)((uintptr_t)actions->conf + base);
+	}
+}
+
 static int
 vhost_user_flow_create(struct virtio_net **pdev, struct vhu_msg_context *ctx,
 			int main_fd __rte_unused)
@@ -2769,6 +2793,7 @@ vhost_user_flow_create(struct virtio_net **pdev, struct vhu_msg_context *ctx,
 		return RTE_VHOST_MSG_RESULT_ERR;
 	struct virtio_net *dev = *pdev;
 	if (dev->notify_ops->flow_create) {
+		rule_offset_to_ptrs((struct rte_flow_conv_rule *)&(ctx->msg.payload.flow_desc.hdr));
 		dev->notify_ops->flow_create(dev->vid,
 				             (uint8_t *)&(ctx->msg.payload.flow_desc),
 					     ctx->msg.size);

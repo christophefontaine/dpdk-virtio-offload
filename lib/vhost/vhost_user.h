@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 #include <linux/vhost.h>
-#include <linux/rtnetlink.h>
 
 #include "rte_vhost.h"
 
@@ -129,17 +128,8 @@ typedef struct VhostUserInflight {
 	uint16_t queue_size;
 } VhostUserInflight;
 
-struct virtio_net_flow_desc {
-	uint64_t flow_id;
-	struct nlmsghdr hdr;
-	uint8_t data[1024];
-};
-
-struct virtio_net_flow_stats {
-	uint64_t flow_id;
-	uint64_t hits;
-	uint64_t bytes;
-};
+struct virtio_net_flow_desc;
+struct virtio_net_flow_stats;
 
 typedef struct VhostUserMsg {
 	union {

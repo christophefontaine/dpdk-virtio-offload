@@ -25,6 +25,7 @@ extern "C" {
 #include <linux/vhost.h>
 #include <linux/virtio_ring.h>
 #include <linux/virtio_net.h>
+#include <linux/rtnetlink.h>
 
 #define RTE_VHOST_USER_CLIENT		(1ULL << 0)
 #define RTE_VHOST_USER_NO_RECONNECT	(1ULL << 1)
@@ -220,6 +221,20 @@ struct rte_vhost_vring {
 	int			kickfd;
 	uint16_t		size;
 };
+
+
+struct virtio_net_flow_desc {
+	uint64_t flow_id;
+	struct nlmsghdr hdr;
+	uint8_t data[1024];
+};
+
+struct virtio_net_flow_stats {
+	uint64_t flow_id;
+	uint64_t hits;
+	uint64_t bytes;
+};
+
 
 /**
  * Possible results of the vhost user message handling callbacks
